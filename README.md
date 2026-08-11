@@ -37,6 +37,7 @@ with them.
 | `relaxation_T1ir_twocomponents.py` | T1 via inversion recovery, two overlapping lineshape components (shape fixed on the fully-relaxed row, amplitudes solved per row by linear least squares) |
 | `relaxation_T1sr.py` | T1 via saturation recovery, single peak |
 | `relaxation_T1sr_twocomponents.py` | T1 via saturation recovery, two components |
+| `relaxation_T1_onepulse_series.py` | T1 recovery via a series of independent, individually-phased 1D spectra (D1 series) with biexponential fit — more robust alternative to the pseudo-2D approach when the shared-reference decomposition proved unstable |
 | `relaxation_T2.py` | T2 via spin-echo, monoexponential fit |
 | `mqmas_2d_processing.py` | 2D MQMAS (triple-quantum) processing: States F1 reconstruction, shearing, isotropic/MAS projections |
 | `calibration_dft.py` | GIPAW/DFT chemical-shift calibration from reference compounds, with leave-one-out cross-validation |
