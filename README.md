@@ -86,10 +86,29 @@ mixed-mobility picture in this material.
 *(Add a plot here, e.g. `results.pdf` from `pipeline_1d.py`, showing the
 spectrum with the two-component fit overlaid.)*
 
+## Testing
+
+```bash
+pip install pytest
+pytest tests/
+```
+
+`core.py` and `fitting.py` are covered by unit tests built on synthetic
+data with known ground truth (e.g. recovering injected pseudo-Voigt
+parameters, or a known phase error) — see `tests/test_core.py` and
+`tests/test_fitting.py`.
+
+## Full runnable example (notebook)
+
+See [`examples/library_nmr_demo.ipynb`](examples/library_nmr_demo.ipynb)
+for a full, runnable walkthrough: from a synthetic ⁷Li FID to a
+two-component pseudo-Voigt deconvolution, using the real `core.py` /
+`fitting.py` functions.
+
 ## Installation
 
 ```bash
-git clone https://github.com/<your-username>/library_nmr.git
+git clone https://github.com/listwanarthur/library_nmr.git
 cd library_nmr
 pip install -r requirements.txt
 ```
@@ -106,20 +125,33 @@ nmrglue
 ## Structure
 
 ```
-library_nmr/
-├── __init__.py
-├── core.py                              # shared: GRPDLY, FID processing, phasing, delay parsing
-├── fitting.py                           # shared: pseudo-Voigt fitting
-├── pipeline_1d.py                       # main 1D processing + fitting
-├── multi_spectra_comparison.py
-├── check_drift.py
-├── relaxation_T1ir.py
-├── relaxation_T1ir_twocomponents.py
-├── relaxation_T1sr.py
-├── relaxation_T1sr_twocomponents.py
-├── relaxation_T2.py
-├── mqmas_2d_processing.py
-└── calibration_dft.py
+library_nmr/                             (repo root)
+├── README.md
+├── requirements.txt
+├── LICENSE
+├── .gitignore
+├── library_nmr/                         (the package)
+│   ├── __init__.py
+│   ├── core.py                              # shared: GRPDLY, FID processing, phasing, delay parsing
+│   ├── fitting.py                           # shared: pseudo-Voigt fitting
+│   ├── pipeline_1d.py                       # main 1D processing + fitting
+│   ├── multi_spectra_comparison.py
+│   ├── check_drift.py
+│   ├── relaxation_T1ir.py
+│   ├── relaxation_T1ir_twocomponents.py
+│   ├── relaxation_T1sr.py
+│   ├── relaxation_T1sr_twocomponents.py
+│   ├── relaxation_T1_onepulse_series.py
+│   ├── relaxation_T2.py
+│   ├── mqmas_2d_processing.py
+│   └── calibration_dft.py
+├── tests/                                (unit tests, pytest)
+│   ├── __init__.py
+│   ├── test_core.py
+│   └── test_fitting.py
+└── examples/                             (runnable notebook demo)
+    ├── library_nmr_demo.ipynb
+    └── synthetic_7Li_fit.pdf
 ```
 
 Each processing script (`relaxation_*`, `check_drift.py`,
@@ -145,6 +177,13 @@ applies everywhere at once.
 - **Drift diagnostics** (`check_drift.py`): checks peak position/intensity
   against acquisition row index (not the delay itself) to separate real
   T1/T2 physics from instrumental drift over long unlocked acquisitions.
+- **T1 via onepulse D1 series** (`relaxation_T1_onepulse_series.py`): an
+  alternative to the pseudo-2D T1 scripts above. Instead of a single long
+  acquisition split into rows sharing one reference lineshape, each D1
+  point is acquired and phased as an independent 1D spectrum. Less
+  automated, but proved more robust when the shared-reference
+  decomposition was unstable/drift-prone for this particular dataset —
+  kept here as a documented alternative, not a replacement.
 
 ## Context
 
