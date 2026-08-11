@@ -39,6 +39,8 @@ with them.
 | `relaxation_T1sr_twocomponents.py` | T1 via saturation recovery, two components |
 | `relaxation_T1_onepulse_series.py` | T1 recovery via a series of independent, individually-phased 1D spectra (D1 series) with biexponential fit — more robust alternative to the pseudo-2D approach when the shared-reference decomposition proved unstable |
 | `relaxation_T2.py` | T2 via spin-echo, monoexponential fit |
+| `relaxation_T2_echo_series.py` | T2 via a series of independent, individually-phased 1D spectra at discrete echo delays (L0 x rotor period), biexponential fit with relative weighting — alternative to the pseudo-2D approach when it gave flat/degenerate fits |
+| `relaxation_T2_components.py` | T2 per lithium environment: lineshape (position/width/eta) fixed once on the best-S/N reference spectrum, then per-spectrum component amplitudes solved by non-negative least squares (NNLS) — each component's own T2 fit independently, since a mixed total-intensity decay isn't a single exponential |
 | `mqmas_2d_processing.py` | 2D MQMAS (triple-quantum) processing: States F1 reconstruction, shearing, isotropic/MAS projections |
 | `calibration_dft.py` | GIPAW/DFT chemical-shift calibration from reference compounds, with leave-one-out cross-validation |
 | `core.py` | Shared low-level building blocks: GRPDLY handling, FID processing, automatic phasing, Bruker delay-list parsing |
@@ -143,6 +145,8 @@ library_nmr/                             (repo root)
 │   ├── relaxation_T1sr_twocomponents.py
 │   ├── relaxation_T1_onepulse_series.py
 │   ├── relaxation_T2.py
+│   ├── relaxation_T2_echo_series.py
+│   ├── relaxation_T2_components.py
 │   ├── mqmas_2d_processing.py
 │   └── calibration_dft.py
 ├── tests/                                (unit tests, pytest)
@@ -184,6 +188,16 @@ applies everywhere at once.
   automated, but proved more robust when the shared-reference
   decomposition was unstable/drift-prone for this particular dataset —
   kept here as a documented alternative, not a replacement.
+- **T2 as an independent-spectra series** (`relaxation_T2_echo_series.py`,
+  `relaxation_T2_components.py`): same rationale as the T1 onepulse
+  series above, applied to T2. `relaxation_T2_echo_series.py` fits the
+  total peak intensity vs echo delay with a biexponential (the fast/slow
+  populations aren't resolved into separate components here).
+  `relaxation_T2_components.py` goes further: it fixes each component's
+  lineshape once on the best-S/N spectrum, then solves only the
+  amplitudes per spectrum via NNLS (non-negative least squares) — linear,
+  fast, and can't return the unphysical negative amplitudes a free fit
+  sometimes did — giving each lithium environment its own independent T2.
 
 ## Context
 
