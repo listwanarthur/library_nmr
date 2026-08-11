@@ -157,146 +157,147 @@ def monoexp_decay(t, A0, T2):
     return A0 * np.exp(-t / T2)
 
 
-# === STEP 1: reference shape fit ===
-ref_path = DATASETS[REFERENCE_L0]
-print(f"\n=== Reference shape fit (L0={REFERENCE_L0}, {ref_path}) ===")
-delta_ref, spectrum_ref, _ = process_1d_spectrum(
-    ref_path, LB, PH0_MANUAL, PH1, ZF_FACTOR,
-    auto_ph0=AUTO_PH0, read_phase_from_procs=READ_PHASE_FROM_PROCS,
-    reference_shift_ppm=REFERENCE_SHIFT_PPM
-)
-ref_results = fit_group(
-    delta_ref, spectrum_ref.real,
-    REFERENCE_PEAKS["ppm_min"], REFERENCE_PEAKS["ppm_max"], REFERENCE_PEAKS["p0"],
-    eta_fixed_list=REFERENCE_PEAKS.get("eta_fixed"),
-    width_bounds_list=REFERENCE_PEAKS.get("width_bounds"),
-    position_bounds_list=REFERENCE_PEAKS.get("position_bounds"),
-)
-for name, r in zip(COMPONENT_NAMES, ref_results):
-    print(f"  {name}: position={r['position']:.3f} ppm, width={r['width']:.3f} ppm, eta={r['eta']:.3f}  (FROZEN for the rest of the fit)")
+if __name__ == "__main__":
+    # === STEP 1: reference shape fit ===
+    ref_path = DATASETS[REFERENCE_L0]
+    print(f"\n=== Reference shape fit (L0={REFERENCE_L0}, {ref_path}) ===")
+    delta_ref, spectrum_ref, _ = process_1d_spectrum(
+        ref_path, LB, PH0_MANUAL, PH1, ZF_FACTOR,
+        auto_ph0=AUTO_PH0, read_phase_from_procs=READ_PHASE_FROM_PROCS,
+        reference_shift_ppm=REFERENCE_SHIFT_PPM
+    )
+    ref_results = fit_group(
+        delta_ref, spectrum_ref.real,
+        REFERENCE_PEAKS["ppm_min"], REFERENCE_PEAKS["ppm_max"], REFERENCE_PEAKS["p0"],
+        eta_fixed_list=REFERENCE_PEAKS.get("eta_fixed"),
+        width_bounds_list=REFERENCE_PEAKS.get("width_bounds"),
+        position_bounds_list=REFERENCE_PEAKS.get("position_bounds"),
+    )
+    for name, r in zip(COMPONENT_NAMES, ref_results):
+        print(f"  {name}: position={r['position']:.3f} ppm, width={r['width']:.3f} ppm, eta={r['eta']:.3f}  (FROZEN for the rest of the fit)")
 
-components = [{"position": r["position"], "width": r["width"], "eta": r["eta"]} for r in ref_results]
-n_comp = len(components)
+    components = [{"position": r["position"], "width": r["width"], "eta": r["eta"]} for r in ref_results]
+    n_comp = len(components)
 
-# === STEP 2: fixed-shape amplitude fit on every spectrum of the series ===
-L0_list, tau_list = [], []
-amp_series = [[] for _ in range(n_comp)]
+    # === STEP 2: fixed-shape amplitude fit on every spectrum of the series ===
+    L0_list, tau_list = [], []
+    amp_series = [[] for _ in range(n_comp)]
 
-for l0, path in sorted(DATASETS.items()):
-    tau_us = l0 * TAU_ROTOR_US
-    print(f"\nL0 = {l0}  (tau_echo = {tau_us:.0f} µs)  ({path})")
-    try:
-        delta, spectrum, _ = process_1d_spectrum(
-            path, LB, PH0_MANUAL, PH1, ZF_FACTOR,
-            auto_ph0=AUTO_PH0, read_phase_from_procs=READ_PHASE_FROM_PROCS,
-            reference_shift_ppm=REFERENCE_SHIFT_PPM
-        )
-    except OSError as e:
-        print(f"  SKIPPED — could not read dataset: {e}")
-        continue
-    amps = fit_amplitudes_fixed_shape(delta, spectrum.real, REFERENCE_PEAKS["ppm_min"], REFERENCE_PEAKS["ppm_max"], components)
-    for name, a in zip(COMPONENT_NAMES, amps):
-        print(f"  {name}: amplitude = {a:.4e}" + ("  (zeroed by NNLS — below detection for this component)" if a <= 0 else ""))
-    L0_list.append(l0)
-    tau_list.append(tau_us)
+    for l0, path in sorted(DATASETS.items()):
+        tau_us = l0 * TAU_ROTOR_US
+        print(f"\nL0 = {l0}  (tau_echo = {tau_us:.0f} µs)  ({path})")
+        try:
+            delta, spectrum, _ = process_1d_spectrum(
+                path, LB, PH0_MANUAL, PH1, ZF_FACTOR,
+                auto_ph0=AUTO_PH0, read_phase_from_procs=READ_PHASE_FROM_PROCS,
+                reference_shift_ppm=REFERENCE_SHIFT_PPM
+            )
+        except OSError as e:
+            print(f"  SKIPPED — could not read dataset: {e}")
+            continue
+        amps = fit_amplitudes_fixed_shape(delta, spectrum.real, REFERENCE_PEAKS["ppm_min"], REFERENCE_PEAKS["ppm_max"], components)
+        for name, a in zip(COMPONENT_NAMES, amps):
+            print(f"  {name}: amplitude = {a:.4e}" + ("  (zeroed by NNLS — below detection for this component)" if a <= 0 else ""))
+        L0_list.append(l0)
+        tau_list.append(tau_us)
+        for i in range(n_comp):
+            amp_series[i].append(amps[i])
+
+    tau = np.array(tau_list)
+
+    # === STEP 3: independent mono-exponential T2 fit per component ===
+    fit_params = []  # (A0, T2, A0_err, T2_err) per component
     for i in range(n_comp):
-        amp_series[i].append(amps[i])
+        y = np.array(amp_series[i])
+        usable = y > 0  # NNLS can zero out a point -> drop it rather than fit log(0)
+        if usable.sum() < 3:
+            print(f"\n{COMPONENT_NAMES[i]}: only {usable.sum()} usable (>0) points — cannot fit, skipping.")
+            fit_params.append(None)
+            continue
+        t_fit_in, y_fit_in = tau[usable], y[usable]
+        p0 = [y_fit_in.max(), t_fit_in[len(t_fit_in)//2]]
+        try:
+            popt, pcov = curve_fit(monoexp_decay, t_fit_in, y_fit_in, p0=p0, sigma=y_fit_in,
+                                    bounds=([0, 1], [10 * y_fit_in.max(), 200000]), maxfev=20000)
+            perr = np.sqrt(np.diag(pcov))
+            fit_params.append((popt[0], popt[1], perr[0], perr[1]))
+            rel_resid = 100 * (y_fit_in - monoexp_decay(t_fit_in, *popt)) / y_fit_in
+            print(f"\n{COMPONENT_NAMES[i]}: T2 = {popt[1]:.1f} +/- {perr[1]:.1f} us  "
+                  f"(fit on {usable.sum()}/{len(y)} points)")
+            print(f"  relative residuals (%): {np.round(rel_resid, 2)}")
+            if np.any(np.abs(rel_resid) > 20):
+                print("  WARNING: some points have >20% residual — check phasing/S-N on those spectra.")
+        except RuntimeError as e:
+            print(f"\n{COMPONENT_NAMES[i]}: fit failed ({e})")
+            fit_params.append(None)
 
-tau = np.array(tau_list)
+    # === export ===
+    df = pd.DataFrame({"L0": L0_list, "tau_echo_us": tau})
+    for i, name in enumerate(COMPONENT_NAMES):
+        df[f"amplitude_{name.split()[0]}"] = amp_series[i]
+    df.to_csv(f"{OUTPUT_NAME}.csv", index=False)
+    print(f"\nResults exported to {OUTPUT_NAME}.csv")
 
-# === STEP 3: independent mono-exponential T2 fit per component ===
-fit_params = []  # (A0, T2, A0_err, T2_err) per component
-for i in range(n_comp):
-    y = np.array(amp_series[i])
-    usable = y > 0  # NNLS can zero out a point -> drop it rather than fit log(0)
-    if usable.sum() < 3:
-        print(f"\n{COMPONENT_NAMES[i]}: only {usable.sum()} usable (>0) points — cannot fit, skipping.")
-        fit_params.append(None)
-        continue
-    t_fit_in, y_fit_in = tau[usable], y[usable]
-    p0 = [y_fit_in.max(), t_fit_in[len(t_fit_in)//2]]
-    try:
-        popt, pcov = curve_fit(monoexp_decay, t_fit_in, y_fit_in, p0=p0, sigma=y_fit_in,
-                                bounds=([0, 1], [10 * y_fit_in.max(), 200000]), maxfev=20000)
-        perr = np.sqrt(np.diag(pcov))
-        fit_params.append((popt[0], popt[1], perr[0], perr[1]))
-        rel_resid = 100 * (y_fit_in - monoexp_decay(t_fit_in, *popt)) / y_fit_in
-        print(f"\n{COMPONENT_NAMES[i]}: T2 = {popt[1]:.1f} +/- {perr[1]:.1f} us  "
-              f"(fit on {usable.sum()}/{len(y)} points)")
-        print(f"  relative residuals (%): {np.round(rel_resid, 2)}")
-        if np.any(np.abs(rel_resid) > 20):
-            print("  WARNING: some points have >20% residual — check phasing/S-N on those spectra.")
-    except RuntimeError as e:
-        print(f"\n{COMPONENT_NAMES[i]}: fit failed ({e})")
-        fit_params.append(None)
+    # === plot ===
+    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(8, 7), gridspec_kw={"height_ratios": [3, 1]}, sharex=True)
 
-# === export ===
-df = pd.DataFrame({"L0": L0_list, "tau_echo_us": tau})
-for i, name in enumerate(COMPONENT_NAMES):
-    df[f"amplitude_{name.split()[0]}"] = amp_series[i]
-df.to_csv(f"{OUTPUT_NAME}.csv", index=False)
-print(f"\nResults exported to {OUTPUT_NAME}.csv")
+    textlines = []
+    for i, name in enumerate(COMPONENT_NAMES):
+        y = np.array(amp_series[i])
+        usable = y > 0
+        ax.scatter(tau[usable], y[usable], color=COMPONENT_COLORS[i], s=55, zorder=3, label=f"{name} — data")
+        if fit_params[i] is not None:
+            A0, T2, A0e, T2e = fit_params[i]
+            t_fit = np.logspace(np.log10(tau.min() / 1.5), np.log10(tau.max() * 1.3), 400)
+            ax.plot(t_fit, monoexp_decay(t_fit, A0, T2), color=COMPONENT_COLORS[i], lw=1.5, zorder=2,
+                    label=f"{name} — fit")
+            textlines.append(f"T2 {name} = {T2:.0f} +/- {T2e:.0f} us")
 
-# === plot ===
-fig, (ax, ax2) = plt.subplots(2, 1, figsize=(8, 7), gridspec_kw={"height_ratios": [3, 1]}, sharex=True)
+    # below-detection points (never fitted)
+    nd_tau, nd_y = [], []
+    for l0, path in sorted(BELOW_DETECTION.items()):
+        tau_us = l0 * TAU_ROTOR_US
+        try:
+            delta, spectrum, _ = process_1d_spectrum(
+                path, LB, PH0_MANUAL, PH1, ZF_FACTOR,
+                auto_ph0=AUTO_PH0, read_phase_from_procs=READ_PHASE_FROM_PROCS,
+                reference_shift_ppm=REFERENCE_SHIFT_PPM
+            )
+            amps_nd = fit_amplitudes_fixed_shape(delta, spectrum.real, REFERENCE_PEAKS["ppm_min"], REFERENCE_PEAKS["ppm_max"], components)
+            nd_tau.append(tau_us)
+            nd_y.append(sum(amps_nd))
+        except OSError:
+            pass
+    if nd_tau:
+        ax.scatter(nd_tau, nd_y, marker="x", color="gray", s=70, zorder=3, label="below detection (ND)")
 
-textlines = []
-for i, name in enumerate(COMPONENT_NAMES):
-    y = np.array(amp_series[i])
-    usable = y > 0
-    ax.scatter(tau[usable], y[usable], color=COMPONENT_COLORS[i], s=55, zorder=3, label=f"{name} — data")
-    if fit_params[i] is not None:
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_ylabel("Component amplitude (a.u.)")
+    ax.set_title(r"$^7$Li T$_2$ per component (fixed shape, NNLS amplitudes)")
+    if textlines:
+        ax.text(0.97, 0.05, "\n".join(textlines), transform=ax.transAxes, fontsize=10,
+                va="bottom", ha="right",
+                bbox=dict(boxstyle="round", facecolor="white", edgecolor="gray", alpha=0.9))
+    ax.legend(loc="upper right", frameon=False, fontsize=8.5)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    for i, name in enumerate(COMPONENT_NAMES):
+        if fit_params[i] is None:
+            continue
+        y = np.array(amp_series[i])
+        usable = y > 0
         A0, T2, A0e, T2e = fit_params[i]
-        t_fit = np.logspace(np.log10(tau.min() / 1.5), np.log10(tau.max() * 1.3), 400)
-        ax.plot(t_fit, monoexp_decay(t_fit, A0, T2), color=COMPONENT_COLORS[i], lw=1.5, zorder=2,
-                label=f"{name} — fit")
-        textlines.append(f"T2 {name} = {T2:.0f} +/- {T2e:.0f} us")
+        resid_pct = 100 * (y[usable] - monoexp_decay(tau[usable], A0, T2)) / y[usable]
+        ax2.scatter(tau[usable], resid_pct, color=COMPONENT_COLORS[i], s=40)
+    ax2.axhline(0, color="k", lw=0.8)
+    ax2.set_xscale("log")
+    ax2.set_xlabel("Echo delay tau (us) = L0 x tau_rotor")
+    ax2.set_ylabel("residual (%)")
+    ax2.spines["top"].set_visible(False)
+    ax2.spines["right"].set_visible(False)
 
-# below-detection points (never fitted)
-nd_tau, nd_y = [], []
-for l0, path in sorted(BELOW_DETECTION.items()):
-    tau_us = l0 * TAU_ROTOR_US
-    try:
-        delta, spectrum, _ = process_1d_spectrum(
-            path, LB, PH0_MANUAL, PH1, ZF_FACTOR,
-            auto_ph0=AUTO_PH0, read_phase_from_procs=READ_PHASE_FROM_PROCS,
-            reference_shift_ppm=REFERENCE_SHIFT_PPM
-        )
-        amps_nd = fit_amplitudes_fixed_shape(delta, spectrum.real, REFERENCE_PEAKS["ppm_min"], REFERENCE_PEAKS["ppm_max"], components)
-        nd_tau.append(tau_us)
-        nd_y.append(sum(amps_nd))
-    except OSError:
-        pass
-if nd_tau:
-    ax.scatter(nd_tau, nd_y, marker="x", color="gray", s=70, zorder=3, label="below detection (ND)")
-
-ax.set_xscale("log")
-ax.set_yscale("log")
-ax.set_ylabel("Component amplitude (a.u.)")
-ax.set_title(r"$^7$Li T$_2$ per component (fixed shape, NNLS amplitudes)")
-if textlines:
-    ax.text(0.97, 0.05, "\n".join(textlines), transform=ax.transAxes, fontsize=10,
-            va="bottom", ha="right",
-            bbox=dict(boxstyle="round", facecolor="white", edgecolor="gray", alpha=0.9))
-ax.legend(loc="upper right", frameon=False, fontsize=8.5)
-ax.spines["top"].set_visible(False)
-ax.spines["right"].set_visible(False)
-
-for i, name in enumerate(COMPONENT_NAMES):
-    if fit_params[i] is None:
-        continue
-    y = np.array(amp_series[i])
-    usable = y > 0
-    A0, T2, A0e, T2e = fit_params[i]
-    resid_pct = 100 * (y[usable] - monoexp_decay(tau[usable], A0, T2)) / y[usable]
-    ax2.scatter(tau[usable], resid_pct, color=COMPONENT_COLORS[i], s=40)
-ax2.axhline(0, color="k", lw=0.8)
-ax2.set_xscale("log")
-ax2.set_xlabel("Echo delay tau (us) = L0 x tau_rotor")
-ax2.set_ylabel("residual (%)")
-ax2.spines["top"].set_visible(False)
-ax2.spines["right"].set_visible(False)
-
-plt.tight_layout()
-plt.savefig(f"{OUTPUT_NAME}.pdf")
-plt.show()
+    plt.tight_layout()
+    plt.savefig(f"{OUTPUT_NAME}.pdf")
+    plt.show()
