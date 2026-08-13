@@ -7,10 +7,10 @@ from scipy.optimize import curve_fit
 from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0
 
 # ============================================================
-# T2 SOLID-ECHO FIT — nmr_library (echosolide_v2, discrete L0 series)
+# T2 SOLID-ECHO FIT — library_nmr (echosolide_v2, discrete L0 series)
 # Usage: edit the CONFIGURATION block below, then run
 #
-# Same principle as fit_T1_recovery.py: independent, individually
+# Same principle as relaxation_T1_onepulse_series.py: independent, individually
 # phased onepulse-style spectra rather than a pseudo-2D echosolid
 # (which gave flat/degenerate fits) or a shared-reference two-component
 # decomposition (unstable run-to-run). Just the total peak intensity
@@ -28,6 +28,14 @@ from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0
 # constrains the slow tail — so this script fits with sigma=I
 # (relative weighting) by default. Do not remove this without checking
 # the residuals on the longest delays.
+#
+# Phase: PH0 is determined ONCE on the reference (best S/N) spectrum and
+# FROZEN for the whole series, instead of re-running AUTO_PH0 on every
+# spectrum independently. On a real overnight series this mattered: two
+# low-S/N points came back with PH0 far outside the tight cluster formed
+# by every other spectrum (auto-search locking onto noise instead of the
+# real signal), which silently corrupted their peak intensity. There is
+# no physical reason for PH0 to drift within one session anyway.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
@@ -35,18 +43,17 @@ TAU_ROTOR_US = 80.0  # rotor period (µs), MAS 12.5 kHz -> 80 µs
 
 DATASETS = {
     # L0 (integer number of rotor periods) : path to the Bruker experiment folder
-    1:   r"D:\Postdoc\Datas\LLZO-400-aug26\237",
-    2:   r"D:\Postdoc\Datas\LLZO-400-aug26\238",
-    4:   r"D:\Postdoc\Datas\LLZO-400-aug26\239",
-    8:   r"D:\Postdoc\Datas\LLZO-400-aug26\240",
-    16:  r"D:\Postdoc\Datas\LLZO-400-aug26\241",
-    32:  r"D:\Postdoc\Datas\LLZO-400-aug26\242",
-    40:  r"D:\Postdoc\Datas\LLZO-400-aug26\...",
-    50:  r"D:\Postdoc\Datas\LLZO-400-aug26\...",
-    65:  r"D:\Postdoc\Datas\LLZO-400-aug26\...",
-    80:  r"D:\Postdoc\Datas\LLZO-400-aug26\...",
-    90:  r"D:\Postdoc\Datas\LLZO-400-aug26\...",
-    100: r"D:\Postdoc\Datas\LLZO-400-aug26\...",
+    1:   r"D:\Postdoc\Datas\LLZO-400-aug26\253",
+    2:   r"D:\Postdoc\Datas\LLZO-400-aug26\254",
+    4:   r"D:\Postdoc\Datas\LLZO-400-aug26\255",
+    8:   r"D:\Postdoc\Datas\LLZO-400-aug26\256",
+    16:  r"D:\Postdoc\Datas\LLZO-400-aug26\257",
+    32:  r"D:\Postdoc\Datas\LLZO-400-aug26\258",
+    40:  r"D:\Postdoc\Datas\LLZO-400-aug26\259",
+    50:  r"D:\Postdoc\Datas\LLZO-400-aug26\260",
+    80:  r"D:\Postdoc\Datas\LLZO-400-aug26\262",
+    90:  r"D:\Postdoc\Datas\LLZO-400-aug26\263",
+    100: r"D:\Postdoc\Datas\LLZO-400-aug26\264",
 }
 
 # Points known to be at/below the noise floor (e.g. old 243 at L0=100 with
@@ -64,7 +71,14 @@ AUTO_PH0 = True  # True: automatic PH0 search by maximizing the real part
 READ_PHASE_FROM_PROCS = False  # set True to read ph0/ph1 from TopSpin (procs) — takes priority over AUTO_PH0
 REFERENCE_SHIFT_PPM = 2  # additive shift applied to the ppm axis (referencing) — same convention as pipeline_1d.py
 ZF_FACTOR = 1  # zero-filling: 1=none, 2=double, 4=quadruple
-PEAK_PPM_WINDOW = (30, -30)  # window to search for the peak max (same span as your ZOOM)
+PEAK_PPM_WINDOW = (6, -4)  # window to search for the peak max. Kept TIGHT around the
+    # real peak (~0.9-1.4 ppm here) on purpose: a wide window (e.g. +/-30 ppm) lets
+    # argmax lock onto a noise spike elsewhere in the spectrum once the real S/N
+    # drops, at which point BOTH the reported intensity and the reported peak
+    # position become meaningless (position jumping around ppm, intensity
+    # occasionally increasing with delay, which is not physically possible for a
+    # decay). Re-check this range against your actual peak position before running.
+PHASE_REFERENCE_L0 = None  # L0 to determine PH0 from (frozen for the whole series). None = use the smallest L0 in DATASETS (best S/N).
 OUTPUT_NAME = "T2_echosolide_fit"
 # ================================================
 
@@ -72,9 +86,8 @@ OUTPUT_NAME = "T2_echosolide_fit"
 def process_1d_spectrum(path, LB, ph0_manual, ph1, zf_factor,
                          auto_ph0=True, read_phase_from_procs=False, reference_shift_ppm=0.0):
     """Reads a Bruker file, corrects GRPDLY, apodizes, FFTs, and phases the spectrum.
-    Built on the shared core.process_row / core.find_best_ph0 — same pattern
-    as pipeline_1d.py / relaxation_T1_onepulse_series.py, kept in sync on
-    purpose so every script treats a given dataset the same way.
+    Built on the shared core.process_row / core.find_best_ph0 — same pattern as
+    pipeline_1d.py / relaxation_T1_onepulse_series.py, kept in sync on purpose.
     """
     dic, data = ng.bruker.read(path, read_procs=read_phase_from_procs)
 
@@ -112,13 +125,27 @@ def process_1d_spectrum(path, LB, ph0_manual, ph1, zf_factor,
 
 
 def get_peak_intensity(delta, signal, ppm_window):
-    """Simple total peak height within ppm_window — deliberately NOT a
-    two-component decomposition, same rationale as fit_T1_recovery.py."""
+    """Integrated intensity (trapezoidal area) within ppm_window — deliberately
+    NOT a two-component decomposition, same rationale as relaxation_T1_onepulse_series.py.
+
+    Earlier version used argmax (single highest point in the window). That
+    works fine at good S/N (T1 series never got weak enough for it to matter)
+    but breaks down for the low-S/N tail of a T2 series: a single-point max is
+    very noise-sensitive and systematically biased UPWARDS once the real
+    signal amplitude approaches the noise level (confirmed on real data: peak
+    position wandering by >1 ppm and one point's "intensity" increasing with
+    delay, which a real decay cannot do). Integrating over the window instead
+    averages the noise down rather than picking its highest excursion — the
+    standard way to quantify a weak signal.
+    """
     lo, hi = sorted(ppm_window)
     mask = (delta >= lo) & (delta <= hi)
-    window = signal[mask]
-    idx = int(np.argmax(window))
-    return float(window[idx]), float(delta[mask][idx])
+    window_ppm = delta[mask]
+    window_sig = signal[mask]
+    peak_ppm = float(window_ppm[int(np.argmax(window_sig))])  # kept only for diagnostic printing
+    sort_idx = np.argsort(window_ppm)
+    integral = np.trapezoid(window_sig[sort_idx], window_ppm[sort_idx])
+    return float(integral), peak_ppm
 
 
 def biexp_decay(t, A1, T2fast, A2, T2slow):
@@ -126,112 +153,125 @@ def biexp_decay(t, A1, T2fast, A2, T2slow):
     return A1 * np.exp(-t / T2fast) + A2 * np.exp(-t / T2slow)
 
 
-# === PROCESSING ===
-L0_list, tau_list, I_list, ph0_list = [], [], [], []
+if __name__ == "__main__":
+    # === PROCESSING ===
 
-for l0, path in sorted(DATASETS.items()):
-    tau_us = l0 * TAU_ROTOR_US
-    print(f"\nL0 = {l0}  (tau_echo = {tau_us:.0f} µs)  ({path})")
-    try:
-        delta, spectrum, bruker_dic, ph0_used = process_1d_spectrum(
-            path, LB, PH0_MANUAL, PH1, ZF_FACTOR,
-            auto_ph0=AUTO_PH0, read_phase_from_procs=READ_PHASE_FROM_PROCS,
-            reference_shift_ppm=REFERENCE_SHIFT_PPM
-        )
-    except OSError as e:
-        print(f"  SKIPPED — could not read dataset: {e}")
-        continue
-    intensity, peak_ppm = get_peak_intensity(delta, spectrum.real, PEAK_PPM_WINDOW)
-    print(f"  peak at {peak_ppm:.3f} ppm, intensity = {intensity:.4e}")
-    L0_list.append(l0)
-    tau_list.append(tau_us)
-    I_list.append(intensity)
-    ph0_list.append(ph0_used)
+    # --- determine PH0 once, on the reference spectrum, and freeze it ---
+    ref_l0 = min(DATASETS.keys()) if PHASE_REFERENCE_L0 is None else PHASE_REFERENCE_L0
+    ref_path = DATASETS[ref_l0]
+    print(f"=== Determining phase from reference spectrum (L0={ref_l0}, best S/N) ===")
+    _, _, _, ph0_frozen = process_1d_spectrum(
+        ref_path, LB, PH0_MANUAL, PH1, ZF_FACTOR,
+        auto_ph0=AUTO_PH0, read_phase_from_procs=READ_PHASE_FROM_PROCS,
+        reference_shift_ppm=REFERENCE_SHIFT_PPM
+    )
+    print(f"  PH0 frozen at {ph0_frozen:.3f}° for the whole series\n")
 
-tau = np.array(tau_list)
-I = np.array(I_list)
+    L0_list, tau_list, I_list, ph0_list = [], [], [], []
 
-if len(tau) < 4:
-    print("\nNeed at least 4 usable points for a stable biexponential fit.")
-    raise SystemExit
+    for l0, path in sorted(DATASETS.items()):
+        tau_us = l0 * TAU_ROTOR_US
+        print(f"L0 = {l0}  (tau_echo = {tau_us:.0f} µs)  ({path})")
+        try:
+            delta, spectrum, bruker_dic, ph0_used = process_1d_spectrum(
+                path, LB, ph0_frozen, PH1, ZF_FACTOR,
+                auto_ph0=False, read_phase_from_procs=False,
+                reference_shift_ppm=REFERENCE_SHIFT_PPM
+            )
+        except OSError as e:
+            print(f"  SKIPPED — could not read dataset: {e}")
+            continue
+        intensity, peak_ppm = get_peak_intensity(delta, spectrum.real, PEAK_PPM_WINDOW)
+        print(f"  peak at {peak_ppm:.3f} ppm, intensity = {intensity:.4e}")
+        L0_list.append(l0)
+        tau_list.append(tau_us)
+        I_list.append(intensity)
+        ph0_list.append(ph0_used)
 
-p0 = [0.9 * I.max(), 150, 0.1 * I.max(), tau[tau > tau.max() / 4].mean()]
-bounds = ([0, 1, 0, 100], [5 * I.max(), 2000, 5 * I.max(), 50000])
-popt, pcov = curve_fit(biexp_decay, tau, I, p0=p0, sigma=I, maxfev=50000, bounds=bounds)
-perr = np.sqrt(np.diag(pcov))
-A1, T2fast, A2, T2slow = popt
-A1e, T2faste, A2e, T2slowe = perr
+    tau = np.array(tau_list)
+    I = np.array(I_list)
 
-frac_fast = A1 / (A1 + A2) * 100
-frac_slow = A2 / (A1 + A2) * 100
+    if len(tau) < 4:
+        print("\nNeed at least 4 usable points for a stable biexponential fit.")
+        raise SystemExit
 
-print("\n--- T2 biexponential decay fit (echo solide) ---")
-print(f"T2_fast = {T2fast:.1f} +/- {T2faste:.1f} us   (fraction = {frac_fast:.1f}%)")
-print(f"T2_slow = {T2slow:.1f} +/- {T2slowe:.1f} us   (fraction = {frac_slow:.1f}%)")
+    p0 = [0.9 * I.max(), 150, 0.1 * I.max(), tau[tau > tau.max() / 4].mean()]
+    bounds = ([0, 1, 0, 100], [5 * I.max(), 2000, 5 * I.max(), 50000])
+    popt, pcov = curve_fit(biexp_decay, tau, I, p0=p0, sigma=I, maxfev=50000, bounds=bounds)
+    perr = np.sqrt(np.diag(pcov))
+    A1, T2fast, A2, T2slow = popt
+    A1e, T2faste, A2e, T2slowe = perr
 
-resid = I - biexp_decay(tau, *popt)
-rel_resid = 100 * resid / I
-print("\nrelative residuals (%):", np.round(rel_resid, 2))
-if np.any(np.abs(rel_resid) > 15):
-    print("WARNING: some points have >15% residual — check those spectra "
-          "(bad phasing, wrong RG, or a point close to the noise floor).")
+    frac_fast = A1 / (A1 + A2) * 100
+    frac_slow = A2 / (A1 + A2) * 100
 
-# --- export (same pandas/CSV convention as pipeline_1d.py / fit_T1_recovery.py) ---
-df = pd.DataFrame({"L0": L0_list, "tau_echo_us": tau, "Intensity": I,
-                    "PH0_deg": ph0_list, "residual_pct": rel_resid})
-df.to_csv(f"{OUTPUT_NAME}.csv", index=False)
-print(f"\nResults exported to {OUTPUT_NAME}.csv")
+    print("\n--- T2 biexponential decay fit (echo solide) ---")
+    print(f"T2_fast = {T2fast:.1f} +/- {T2faste:.1f} us   (fraction = {frac_fast:.1f}%)")
+    print(f"T2_slow = {T2slow:.1f} +/- {T2slowe:.1f} us   (fraction = {frac_slow:.1f}%)")
 
-# --- below-detection points (plotted only, never fitted) ---
-nd_tau, nd_I = [], []
-for l0, path in sorted(BELOW_DETECTION.items()):
-    tau_us = l0 * TAU_ROTOR_US
-    try:
-        delta, spectrum, _, _ = process_1d_spectrum(
-            path, LB, PH0_MANUAL, PH1, ZF_FACTOR,
-            auto_ph0=AUTO_PH0, read_phase_from_procs=READ_PHASE_FROM_PROCS,
-            reference_shift_ppm=REFERENCE_SHIFT_PPM
-        )
-        intensity, _ = get_peak_intensity(delta, spectrum.real, PEAK_PPM_WINDOW)
-    except OSError:
-        intensity = np.nan
-    nd_tau.append(tau_us)
-    nd_I.append(intensity)
+    resid = I - biexp_decay(tau, *popt)
+    rel_resid = 100 * resid / I
+    print("\nrelative residuals (%):", np.round(rel_resid, 2))
+    if np.any(np.abs(rel_resid) > 15):
+        print("WARNING: some points have >15% residual — check those spectra "
+              "(bad phasing, wrong RG, or a point close to the noise floor).")
 
-# --- plot (log-log: the decay spans ~2-3 decades, linear axes would hide the tail) ---
-t_fit = np.logspace(np.log10(tau.min() / 1.5), np.log10(tau.max() * 1.3), 400)
-y_fit = biexp_decay(t_fit, *popt)
+    # --- export ---
+    df = pd.DataFrame({"L0": L0_list, "tau_echo_us": tau, "Intensity": I,
+                        "PH0_deg": ph0_list, "residual_pct": rel_resid})
+    df.to_csv(f"{OUTPUT_NAME}.csv", index=False)
+    print(f"\nResults exported to {OUTPUT_NAME}.csv")
 
-fig, (ax, ax2) = plt.subplots(2, 1, figsize=(8, 7), gridspec_kw={"height_ratios": [3, 1]}, sharex=True)
+    # --- below-detection points (plotted only, never fitted) ---
+    nd_tau, nd_I = [], []
+    for l0, path in sorted(BELOW_DETECTION.items()):
+        tau_us = l0 * TAU_ROTOR_US
+        try:
+            delta, spectrum, _, _ = process_1d_spectrum(
+                path, LB, ph0_frozen, PH1, ZF_FACTOR,
+                auto_ph0=False, read_phase_from_procs=False,
+                reference_shift_ppm=REFERENCE_SHIFT_PPM
+            )
+            intensity, _ = get_peak_intensity(delta, spectrum.real, PEAK_PPM_WINDOW)
+        except OSError:
+            intensity = np.nan
+        nd_tau.append(tau_us)
+        nd_I.append(intensity)
 
-ax.plot(t_fit, y_fit, color="red", lw=1.5, zorder=2, label="biexponential fit")
-ax.scatter(tau, I, color="blue", s=55, zorder=3, label="data")
-if nd_tau:
-    ax.scatter(nd_tau, nd_I, marker="x", color="gray", s=70, zorder=3, label="below detection (ND)")
-ax.set_xscale("log")
-ax.set_yscale("log")
-ax.set_ylabel("Intensity (a.u.)")
-ax.set_title(r"$^7$Li T$_2$ solid-echo decay (discrete L0 series)")
+    # --- plot (log-log: the decay spans ~2-3 decades, linear axes would hide the tail) ---
+    t_fit = np.logspace(np.log10(tau.min() / 1.5), np.log10(tau.max() * 1.3), 400)
+    y_fit = biexp_decay(t_fit, *popt)
 
-textstr = (
-    f"$T_2$ slow = {T2slow:.0f} +/- {T2slowe:.0f} us  ({frac_slow:.1f}%)\n"
-    f"$T_2$ fast = {T2fast:.0f} +/- {T2faste:.0f} us  ({frac_fast:.1f}%)"
-)
-ax.text(0.97, 0.05, textstr, transform=ax.transAxes, fontsize=10.5,
-        va="bottom", ha="right",
-        bbox=dict(boxstyle="round", facecolor="white", edgecolor="gray", alpha=0.9))
-ax.legend(loc="upper right", frameon=False)
-ax.spines["top"].set_visible(False)
-ax.spines["right"].set_visible(False)
+    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(8, 7), gridspec_kw={"height_ratios": [3, 1]}, sharex=True)
 
-ax2.axhline(0, color="k", lw=0.8)
-ax2.scatter(tau, rel_resid, color="blue", s=40)
-ax2.set_xscale("log")
-ax2.set_xlabel("Echo delay tau (us) = L0 x tau_rotor")
-ax2.set_ylabel("residual (%)")
-ax2.spines["top"].set_visible(False)
-ax2.spines["right"].set_visible(False)
+    ax.plot(t_fit, y_fit, color="red", lw=1.5, zorder=2, label="biexponential fit")
+    ax.scatter(tau, I, color="blue", s=55, zorder=3, label="data")
+    if nd_tau:
+        ax.scatter(nd_tau, nd_I, marker="x", color="gray", s=70, zorder=3, label="below detection (ND)")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_ylabel("Intensity (a.u.)")
+    ax.set_title(r"$^7$Li T$_2$ solid-echo decay (discrete L0 series)")
 
-plt.tight_layout()
-plt.savefig(f"{OUTPUT_NAME}.pdf")
-plt.show()
+    textstr = (
+        f"$T_2$ slow = {T2slow:.0f} +/- {T2slowe:.0f} us  ({frac_slow:.1f}%)\n"
+        f"$T_2$ fast = {T2fast:.0f} +/- {T2faste:.0f} us  ({frac_fast:.1f}%)"
+    )
+    ax.text(0.97, 0.05, textstr, transform=ax.transAxes, fontsize=10.5,
+            va="bottom", ha="right",
+            bbox=dict(boxstyle="round", facecolor="white", edgecolor="gray", alpha=0.9))
+    ax.legend(loc="upper right", frameon=False)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    ax2.axhline(0, color="k", lw=0.8)
+    ax2.scatter(tau, rel_resid, color="blue", s=40)
+    ax2.set_xscale("log")
+    ax2.set_xlabel("Echo delay tau (us) = L0 x tau_rotor")
+    ax2.set_ylabel("residual (%)")
+    ax2.spines["top"].set_visible(False)
+    ax2.spines["right"].set_visible(False)
+
+    plt.tight_layout()
+    plt.savefig(f"{OUTPUT_NAME}.pdf")
+    plt.show()

@@ -38,9 +38,10 @@ with them.
 | `relaxation_T1sr.py` | T1 via saturation recovery, single peak |
 | `relaxation_T1sr_twocomponents.py` | T1 via saturation recovery, two components |
 | `relaxation_T1_onepulse_series.py` | T1 recovery via a series of independent, individually-phased 1D spectra (D1 series) with biexponential fit — more robust alternative to the pseudo-2D approach when the shared-reference decomposition proved unstable |
+| `relaxation_T1_components.py` | T1 per lithium environment: lineshape fixed once on the fully-relaxed (best-S/N) spectrum of the same D1 series, amplitudes solved by NNLS, each component's own biexponential T1 fit — narrow and broad come out with essentially the same T1, unlike T2 (see Notes below) |
 | `relaxation_T2.py` | T2 via spin-echo, monoexponential fit |
-| `relaxation_T2_echo_series.py` | T2 via a series of independent, individually-phased 1D spectra at discrete echo delays (L0 x rotor period), biexponential fit with relative weighting — alternative to the pseudo-2D approach when it gave flat/degenerate fits |
-| `relaxation_T2_components.py` | T2 per lithium environment: lineshape (position/width/eta) fixed once on the best-S/N reference spectrum, then per-spectrum component amplitudes solved by non-negative least squares (NNLS) — each component's own T2 fit independently, since a mixed total-intensity decay isn't a single exponential |
+| `relaxation_T2_echo_series.py` | T2 via a series of independent 1D spectra at discrete echo delays (L0 x rotor period): phase frozen once on the reference spectrum, intensity by trapezoidal integration (not argmax) for robustness at low S/N, biexponential fit with relative weighting |
+| `relaxation_T2_components.py` | T2 per lithium environment: lineshape fixed on an EXTERNAL onepulse reference spectrum (not an echo spectrum — see Notes below for why), amplitudes solved by NNLS, each component fit independently with its own biexponential decay |
 | `mqmas_2d_processing.py` | 2D MQMAS (triple-quantum) processing: States F1 reconstruction, shearing, isotropic/MAS projections |
 | `calibration_dft.py` | GIPAW/DFT chemical-shift calibration from reference compounds, with leave-one-out cross-validation |
 | `core.py` | Shared low-level building blocks: GRPDLY handling, FID processing, automatic phasing, Bruker delay-list parsing |
@@ -144,6 +145,7 @@ library_nmr/                             (repo root)
 │   ├── relaxation_T1sr.py
 │   ├── relaxation_T1sr_twocomponents.py
 │   ├── relaxation_T1_onepulse_series.py
+│   ├── relaxation_T1_components.py
 │   ├── relaxation_T2.py
 │   ├── relaxation_T2_echo_series.py
 │   ├── relaxation_T2_components.py
@@ -189,15 +191,44 @@ applies everywhere at once.
   decomposition was unstable/drift-prone for this particular dataset —
   kept here as a documented alternative, not a replacement.
 - **T2 as an independent-spectra series** (`relaxation_T2_echo_series.py`,
-  `relaxation_T2_components.py`): same rationale as the T1 onepulse
-  series above, applied to T2. `relaxation_T2_echo_series.py` fits the
-  total peak intensity vs echo delay with a biexponential (the fast/slow
-  populations aren't resolved into separate components here).
-  `relaxation_T2_components.py` goes further: it fixes each component's
-  lineshape once on the best-S/N spectrum, then solves only the
-  amplitudes per spectrum via NNLS (non-negative least squares) — linear,
-  fast, and can't return the unphysical negative amplitudes a free fit
-  sometimes did — giving each lithium environment its own independent T2.
+  `relaxation_T2_components.py`, `relaxation_T1_components.py`): same
+  rationale as the T1 onepulse series above, applied to T2, plus one
+  further refinement discovered while cross-checking the two components
+  separately.
+  - `relaxation_T2_echo_series.py` fits the *total* peak intensity vs
+    echo delay with a biexponential. Two lessons learned here: PH0 is
+    determined once on the best-S/N spectrum and frozen for the whole
+    series (an independent per-spectrum auto-search occasionally locked
+    onto noise at low S/N and silently corrupted that point), and
+    intensity is extracted by trapezoidal integration over a tight ppm
+    window rather than a single-point maximum (far less noise-sensitive
+    once the decay approaches the detection floor).
+  - `relaxation_T2_components.py` goes further: it fixes each
+    component's lineshape once, then solves only the amplitudes per
+    spectrum via NNLS — but critically, **the reference spectrum for
+    that lineshape fit is deliberately an external onepulse spectrum,
+    not an echo spectrum from the T2 series itself**. The shortest echo
+    delay achievable under MAS is one full rotor period (~80 µs) — a
+    rotor-synchronization constraint, not a choice — and the broad
+    component's own T2 turned out to be comparable to that floor. Using
+    an echo spectrum as the shape reference therefore meant the "shape"
+    itself was already partly decayed, which quietly distorted the fit
+    (pinned the narrow component to a pure Lorentzian, and made the
+    fitted lineshapes of the two components collinear enough that NNLS
+    could no longer tell them apart beyond the first couple of points).
+    Swapping in a fully-relaxed onepulse spectrum as the shape reference
+    — which only has hardware dead time, not a rotor-period floor —
+    fixed this, and also produced each component's own T2 as
+    biexponential rather than a single decay time.
+  - `relaxation_T1_components.py` runs the same fixed-shape/NNLS strategy
+    for T1, where the dead-time problem above doesn't apply (a onepulse
+    T1 series can reference itself). Interestingly, narrow and broad come
+    back with essentially the *same* T1 despite having clearly different
+    T2 — consistent with T1 being driven by a few relaxation sinks
+    (e.g. paramagnetic defects) that spin diffusion can average over on
+    the (seconds-long) T1 timescale, while T2 reflects the local static
+    coupling and stays site-specific on the much faster (microsecond)
+    timescale.
 
 ## Context
 
