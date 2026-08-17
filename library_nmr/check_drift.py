@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import nmrglue as ng
 
-from library_nmr.core import find_grpdly_shift
+from library_nmr.core import find_grpdly_shift, parse_bruker_delay
 
 # ============================================================
 # CHECK_DRIFT — standalone diagnostic for pseudo-2D Bruker datasets
@@ -54,6 +54,48 @@ SW_h = dic["acqus"]["SW_h"]
 SFO1 = dic["acqus"]["SFO1"]
 O1 = dic["acqus"]["O1"]
 dt = 1 / SW_h
+
+# --- CAVEAT (added 18/08): this script's whole logic is "trend vs ROW INDEX =
+# drift, trend vs DELAY = physics". That separation is only valid if row index
+# and delay are NOT monotonically correlated — e.g. a randomized/interleaved
+# delay list. For a T1/T2 series acquired with delays in increasing (or
+# decreasing) order — as the LLZO VT-T1 protocol currently does — row index
+# and delay move together, so a genuine two-component relaxation curve WILL
+# also show a strong trend vs row index, and this script cannot tell that
+# apart from real drift. We load the actual vd/vc list (if present next to
+# the dataset) and check monotonicity so this gets flagged explicitly instead
+# of silently mis-reported.
+delay_values = None
+delay_source = None
+for fname in ("vdlist", "vclist"):
+    try:
+        with open(f"{PATH}/{fname}", "r") as f:
+            delay_values = np.array([parse_bruker_delay(line) for line in f if line.strip()])
+        delay_source = fname
+        break
+    except FileNotFoundError:
+        continue
+if delay_values is None:
+    print("NOTE: no vdlist/vclist found next to the dataset — cannot check whether "
+          "delay order is monotonic. Interpret any 'drift' below with caution.")
+elif len(delay_values) == data.shape[0]:
+    diffs = np.diff(delay_values)
+    is_monotonic = np.all(diffs >= 0) or np.all(diffs <= 0)
+    if is_monotonic:
+        print(f"NOTE: {delay_source} is monotonic in row order (delays acquired in "
+              f"strictly increasing/decreasing order). Row index and delay are therefore "
+              f"confounded here: a real two-component T1/T2 relaxation curve WILL also "
+              f"produce a trend vs row index, and this script CANNOT distinguish that from "
+              f"genuine B0/shim drift. Treat any WARNING below as inconclusive unless you "
+              f"independently know the physics shouldn't produce this trend (e.g. from the "
+              f"already-fitted T1/T2 curve), or re-acquire with a randomized delay order to "
+              f"get a clean drift test.")
+    else:
+        print(f"{delay_source} is NOT monotonic in row order — row-index trends below are "
+              f"not confounded with relaxation and are a meaningful drift diagnostic.")
+else:
+    print(f"NOTE: {delay_source} has {len(delay_values)} values but data has {data.shape[0]} "
+          f"rows — mismatch, skipping the monotonicity check.")
 
 n_rows = data.shape[0]
 n_points = data.shape[1]

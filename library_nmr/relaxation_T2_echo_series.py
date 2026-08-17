@@ -70,7 +70,9 @@ PH1 = -49.524  # PHC1 in degrees (first-order phase correction)
 AUTO_PH0 = True  # True: automatic PH0 search by maximizing the real part
 READ_PHASE_FROM_PROCS = False  # set True to read ph0/ph1 from TopSpin (procs) — takes priority over AUTO_PH0
 REFERENCE_SHIFT_PPM = 2  # additive shift applied to the ppm axis (referencing) — same convention as pipeline_1d.py
-ZF_FACTOR = 1  # zero-filling: 1=none, 2=double, 4=quadruple
+ZF_FACTOR = 1  # zero-filling multiplier: total FFT length = N*(1+ZF_FACTOR) — so
+                 # 0=none, 1=double, 3=quadruple (NOT 1=none/2=double/4=quadruple;
+                 # fixed 18/08, same convention as pipeline_1d.py)
 PEAK_PPM_WINDOW = (6, -4)  # window to search for the peak max. Kept TIGHT around the
     # real peak (~0.9-1.4 ppm here) on purpose: a wide window (e.g. +/-30 ppm) lets
     # argmax lock onto a noise spike elsewhere in the spectrum once the real S/N
@@ -191,8 +193,11 @@ if __name__ == "__main__":
     tau = np.array(tau_list)
     I = np.array(I_list)
 
-    if len(tau) < 4:
-        print("\nNeed at least 4 usable points for a stable biexponential fit.")
+    if len(tau) < 5:
+        # biexp_decay has 4 free parameters (A1, T2fast, A2, T2slow) — need
+        # strictly more data points than parameters for curve_fit to be
+        # well-posed (matches the n_needed=5 guard in relaxation_T2_components.py).
+        print("\nNeed at least 5 usable points for a stable biexponential fit.")
         raise SystemExit
 
     p0 = [0.9 * I.max(), 150, 0.1 * I.max(), tau[tau > tau.max() / 4].mean()]

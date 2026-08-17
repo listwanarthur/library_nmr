@@ -231,6 +231,17 @@ results_per_component = []
 for c in range(n_components):
     y = integrals[:, c]
     M0_guess = y[idx_longest]
+    if M0_guess <= 0:
+        # lstsq over overlapping/near-collinear pseudo-Voigt basis shapes can
+        # return a negative amplitude for a component even when the true
+        # signal is positive. curve_fit's bounds below require M0 >= 0, so a
+        # negative initial guess makes the starting point infeasible and
+        # raises ValueError (not RuntimeError) — crashing the whole script
+        # instead of just failing this component. Clamp to a small positive
+        # fallback instead. (fixed 18/08)
+        M0_guess = max(np.abs(y).max(), 1e-6)
+        print(f"\nComponent {c+1}: NOTE — raw M0 guess from lstsq was <= 0 (near-collinear basis "
+              f"shapes); using |y|.max() as a fallback initial guess instead.")
     target = M0_guess * (1 - 1 / np.e)
     idx_above = np.where(y >= target)[0]
     if len(idx_above) > 0 and idx_above[0] > 0:
@@ -240,6 +251,12 @@ for c in range(n_components):
         T1_guess = t_a + (target - y_a) * (t_b - t_a) / (y_b - y_a)
         print(f"\nComponent {c+1}: (1-1/e) crossing between rows {i1}/{i1+1}, "
               f"T1 guess ~ {T1_guess*1000:.3f} ms")
+    elif len(idx_above) > 0 and idx_above[0] == 0:
+        # Already at/above (1-1/e) of the plateau on the very first tau point —
+        # NOT "never reaches". True T1 may be shorter than this grid resolves.
+        T1_guess = tau_values[0]
+        print(f"\nComponent {c+1}: (1-1/e) of plateau already reached at the shortest tau tested "
+              f"(~{T1_guess*1000:.3f} ms) — using it as an upper-bound initial guess.")
     else:
         T1_guess = np.median(tau_values)
         print(f"\nComponent {c+1}: WARNING — recovery never clearly reaches (1-1/e) of plateau "
@@ -267,8 +284,12 @@ for c in range(n_components):
             print(f"  WARNING: relative T1 uncertainty {err_T1/T1*100:.0f}% — unreliable fit "
                   f"for this component (check tau range / (1-1/e) crossing above).")
         results_per_component.append({"M0": M0, "T1": T1, "err_T1": err_T1, "B": B, "err_B": err_B})
-    except RuntimeError:
-        print(f"Component {c+1}: T1 fit failed to converge.")
+    except (RuntimeError, ValueError) as e:
+        # ValueError is included because an infeasible initial guess (e.g. any
+        # x0 outside `bounds`) raises ValueError rather than RuntimeError —
+        # without catching it here, one bad component crashes the entire
+        # script instead of just being reported as failed. (fixed 18/08)
+        print(f"Component {c+1}: T1 fit failed to converge ({type(e).__name__}: {e}).")
         results_per_component.append({"M0": np.nan, "T1": np.nan, "err_T1": np.nan, "B": np.nan, "err_B": np.nan})
 
 # --- Consistency check: both components should show a similar B (same physical saturation comb) ---

@@ -139,6 +139,15 @@ if len(idx_above) > 0 and idx_above[0] > 0:
     y_a, y_b = intensities[i1 - 1], intensities[i1]
     T1_guess = t_a + (target - y_a) * (t_b - t_a) / (y_b - y_a)
     print(f"\nT1 guess from (1-1/e) crossing: ~{T1_guess*1000:.3f} ms")
+elif len(idx_above) > 0 and idx_above[0] == 0:
+    # (1-1/e) of the plateau is already reached by the very first tau point —
+    # this is NOT "never reaches", it means T1 is at or below the shortest
+    # tau tested. Use the first point as an upper-bound guess rather than
+    # falling back to a meaningless median. (fixed 18/08)
+    T1_guess = tau_values[0]
+    print(f"\nT1 guess: (1-1/e) of plateau already reached at the shortest tau tested "
+          f"(~{T1_guess*1000:.3f} ms) — true T1 may be shorter than this grid resolves. "
+          f"Using it as an upper-bound initial guess.")
 else:
     T1_guess = np.median(tau_values)
     print(f"\nWARNING: recovery never clearly reaches (1-1/e) of plateau within tested tau range — "

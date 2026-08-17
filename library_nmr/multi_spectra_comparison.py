@@ -30,14 +30,21 @@ SPECTRA = [
         "color": "red",
         "LB": 10,
         "PH0_manual": 12.400,
-        "PH1": -49.524,
+        "PH1": -49.524,  # TODO: verify against real acquisition params — this matches
+                          # the "215" echo entry's PH1 exactly, which is suspicious
+                          # since 215 and 209 are different pulse sequences (echo vs
+                          # one-pulse) and would not generally share the same PHC1.
+                          # Not changed automatically: no way to derive the true
+                          # value without re-processing "209" in TopSpin directly.
         "auto_ph0": True,
         "reference_shift_ppm": 2.06,
     },
     # Add as many entries as needed, same structure.
 ]
 
-ZF_FACTOR = 1  # zero-filling: 1=none, 2=double, 4=quadruple — applied to ALL spectra
+ZF_FACTOR = 1  # zero-filling multiplier: total FFT length = N*(1+ZF_FACTOR) — so
+                 # 0=none, 1=double, 3=quadruple (NOT 1=none/2=double/4=quadruple;
+                 # fixed 18/08, same convention as pipeline_1d.py) — applied to ALL spectra
 
 NORMALIZE = "max"  # None, "max", or "area"
     # None  : raw intensities, as acquired (only meaningful if scan counts/receiver

@@ -132,9 +132,23 @@ t1_axis = np.arange(n_t1) * dt_F1
 w_f1 = np.exp(-t1_axis * LB_F1)
 interferogram_f1_apod = interferogram_f1 * w_f1[:, np.newaxis]
 
-# --- Step 4: shearing — applied as a linear phase ramp in the mixed (t1, F2) domain,
-#     via the Fourier shift theorem: shifting F1 by k*f2 (Hz) for each F2 column is
-#     equivalent to multiplying that column's t1 series by exp(i*2*pi*k*f2*t1). ---
+# --- Step 4: shearing — applied as a linear phase ramp in the mixed (t1, F2) domain. ---
+# CAUTION (flagged 18/08, not silently changed — needs empirical verification against
+# real data, not just a literature derivation, since the correct sign here depends on
+# the coherence-pathway/echo-antiecho convention actually used during acquisition,
+# which this script cannot know on its own):
+#   By the Fourier shift theorem, multiplying a t1 column by exp(+i*2*pi*k*f2*t1)
+#   shifts that point of the F1 spectrum by +k*f2 (Hz) after the FFT; multiplying by
+#   exp(-i*2*pi*k*f2*t1) shifts it by -k*f2. The line below uses the MINUS sign
+#   (shift by -k*f2), which previously disagreed with an old comment claiming a "+"
+#   convention — that stale comment has been removed rather than "corrected", because
+#   the actually-correct sign depends on details (P-type vs N-type / echo vs antiecho
+#   selection in the pulse sequence used) that aren't recorded here.
+#   HOW TO CHECK: after running this script, the isotropic F1 projection should show
+#   NARROW, well-resolved ridges/peaks (that's the whole point of shearing). If instead
+#   the 2D ridges run diagonally / the isotropic projection looks broadened or doubled
+#   compared to the unsheared spectrum, flip the sign below (change -1j to +1j) and
+#   re-run.
 k = shearing_ratio(SPIN_I, MQ_ORDER)
 print(f"Shearing ratio R(I={SPIN_I}, p={MQ_ORDER}) = {k:.4f}")
 

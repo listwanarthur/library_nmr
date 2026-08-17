@@ -303,8 +303,13 @@ if __name__ == "__main__":
                   f"({model} needs >= {n_needed}), skipping.")
             if usable.sum() == 2:
                 t_sub, y_sub = tau[usable][:2], y[usable][:2]
-                T2_rough = (t_sub[1] - t_sub[0]) / np.log(y_sub[0] / y_sub[1])
-                print(f"  crude 2-point T2 estimate (NOT a real fit, huge uncertainty): ~{T2_rough:.0f} us")
+                try:
+                    if y_sub[0] <= y_sub[1]:
+                        raise ValueError("no decay between the two points")
+                    T2_rough = (t_sub[1] - t_sub[0]) / np.log(y_sub[0] / y_sub[1])
+                    print(f"  crude 2-point T2 estimate (NOT a real fit, huge uncertainty): ~{T2_rough:.0f} us")
+                except (ValueError, ZeroDivisionError):
+                    print("  crude 2-point T2 estimate: not computable (points equal or non-decaying)")
             fit_params.append(None)
             continue
         t_fit_in, y_fit_in = tau[usable], y[usable]

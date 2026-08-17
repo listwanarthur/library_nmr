@@ -39,6 +39,7 @@ with them.
 | `relaxation_T1sr_twocomponents.py` | T1 via saturation recovery, two components |
 | `relaxation_T1_onepulse_series.py` | T1 recovery via a series of independent, individually-phased 1D spectra (D1 series) with biexponential fit — more robust alternative to the pseudo-2D approach when the shared-reference decomposition proved unstable |
 | `relaxation_T1_components.py` | T1 per lithium environment: lineshape fixed once on the fully-relaxed (best-S/N) spectrum of the same D1 series, amplitudes solved by NNLS, each component's own biexponential T1 fit — narrow and broad come out with essentially the same T1, unlike T2 (see Notes below) |
+| `relaxation_T1_vs_temperature.py` | Variable-temperature T1: runs the same onepulse-D1-series strategy as `relaxation_T1_onepulse_series.py` across a whole temperature series in one pass (biexponential / monoexponential / two-point model selection depending on how many points are usable at each temperature), with an automatic room-temperature sanity check against the corrected reference value |
 | `relaxation_T2.py` | T2 via spin-echo, monoexponential fit |
 | `relaxation_T2_echo_series.py` | T2 via a series of independent 1D spectra at discrete echo delays (L0 x rotor period): phase frozen once on the reference spectrum, intensity by trapezoidal integration (not argmax) for robustness at low S/N, biexponential fit with relative weighting |
 | `relaxation_T2_components.py` | T2 per lithium environment: lineshape fixed on an EXTERNAL onepulse reference spectrum (not an echo spectrum — see Notes below for why), amplitudes solved by NNLS, each component fit independently with its own biexponential decay |
@@ -146,6 +147,7 @@ library_nmr/                             (repo root)
 │   ├── relaxation_T1sr_twocomponents.py
 │   ├── relaxation_T1_onepulse_series.py
 │   ├── relaxation_T1_components.py
+│   ├── relaxation_T1_vs_temperature.py
 │   ├── relaxation_T2.py
 │   ├── relaxation_T2_echo_series.py
 │   ├── relaxation_T2_components.py
@@ -154,7 +156,9 @@ library_nmr/                             (repo root)
 ├── tests/                                (unit tests, pytest)
 │   ├── __init__.py
 │   ├── test_core.py
-│   └── test_fitting.py
+│   ├── test_fitting.py
+│   ├── test_relaxation_T2_components.py
+│   └── test_relaxation_T1_sigma_weighting.py
 └── examples/                             (runnable notebook demo)
     ├── library_nmr_demo.ipynb
     └── synthetic_7Li_fit.pdf
@@ -229,6 +233,27 @@ applies everywhere at once.
     the (seconds-long) T1 timescale, while T2 reflects the local static
     coupling and stays site-specific on the much faster (microsecond)
     timescale.
+- **Weighted fits for wide-dynamic-range curves**: T1 recovery and T2
+  decay curves span a wide range of intensities (weak signal near the
+  fast-relaxing end, near-full recovery/decay at the other). An
+  unweighted least-squares fit is dominated by the large-amplitude points
+  and can bias or fail to constrain the fast component — every
+  biexponential `curve_fit` call in this package for such a curve is
+  weighted with `sigma=` the measured intensities. This was found the
+  hard way once (a ~15-18% systematic residual trend at short recovery
+  times, misdiagnosed at first as an acquisition issue) and later
+  regressed silently in a couple of scripts during refactoring — there's
+  now a regression test (`tests/test_relaxation_T1_sigma_weighting.py`)
+  that fits synthetic data with and without weighting and asserts
+  weighting is required to recover the fast time constant accurately, so
+  this can't reappear unnoticed.
+- **Variable-temperature automation** (`relaxation_T1_vs_temperature.py`):
+  once a D1-series strategy is trusted at one temperature, running it
+  across many temperatures is mostly bookkeeping — this script applies
+  the same model-selection rule (biexponential / monoexponential /
+  two-point estimate, depending on how many points are usable) to every
+  temperature in one pass, and flags automatically if the room-temperature
+  point drifts too far from the previously validated reference value.
 
 ## Context
 

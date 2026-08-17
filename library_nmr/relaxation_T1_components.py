@@ -23,9 +23,12 @@ from library_nmr.fitting import pseudo_voigt, sum_pseudo_voigt, fit_group
 # D1 in this same series (best S/N, fully relaxed) is a perfectly good,
 # undistorted reference. No external reference spectrum needed.
 #
-# Result you should expect (verified on the validated series, exp224-236):
+# Result you should expect (verified on the validated series, exp224-236,
+# BEFORE the 18/08 sigma= weighting fix below — re-verify this range after
+# re-running with the fix, the numbers will likely shift; see fit_T1_components.py
+# in Library_nmr for what the equivalent fix changed there):
 # narrow and broad come out with ESSENTIALLY THE SAME T1_slow (within
-# error bars) and a similar small T1_fast fraction (~3.5-4.5%), even
+# error bars) and a similar small T1_fast fraction (~3.5-4.5%, PRE-FIX), even
 # though their T2 is very different (T2_fast: narrow ~200-250us vs broad
 # ~150us — see relaxation_T2_components.py). This is expected, not a bug:
 # T1 is driven by fluctuations at the Larmor frequency, typically
@@ -216,7 +219,10 @@ if __name__ == "__main__":
         name = COMPONENT_NAMES[i]
         y = np.array(amp_series[i])
         usable = y > 0
-        if usable.sum() < 4:
+        if usable.sum() < 5:
+            # biexp_recovery has 4 free parameters (M0, f, T1a, T1b) — need
+            # strictly more data points than parameters for curve_fit to be
+            # well-posed (matches the n_needed=5 guard in relaxation_T2_components.py).
             print(f"\n{name}: only {usable.sum()} usable (>0) points — cannot fit, skipping.")
             fit_params.append(None)
             continue
@@ -224,7 +230,14 @@ if __name__ == "__main__":
         p0 = [1.1 * y_in.max(), 0.05, 0.4, t_in[t_in > t_in.max() / 4].mean()]
         bounds = ([0.5 * y_in.max(), 0, 0.01, 5], [5 * y_in.max(), 0.3, 5, 200])
         try:
-            popt, pcov = curve_fit(biexp_recovery, t_in, y_in, p0=p0, maxfev=50000, bounds=bounds)
+            # CAUTION (fixed 18/08): sigma=y_in was missing here — same regression
+            # as relaxation_T1_onepulse_series.py. Without it the fit is dominated
+            # by the large-amplitude long-D1 points and effectively ignores the
+            # short-D1 points where T1_fast lives — this was the real cause of a
+            # ~15-18% systematic residual trend at short D1, previously fixed once
+            # and documented in fit_T1_components.py (Library_nmr working scripts).
+            # Do not remove sigma=y_in without re-checking residuals at short D1.
+            popt, pcov = curve_fit(biexp_recovery, t_in, y_in, p0=p0, sigma=y_in, maxfev=50000, bounds=bounds)
             perr = np.sqrt(np.diag(pcov))
             fit_params.append({"popt": tuple(popt), "perr": tuple(perr)})
             M0, f, T1fast, T1slow = popt

@@ -40,7 +40,9 @@ PH1 = -49.524  # PHC1 in degrees (first-order phase correction)
 AUTO_PH0 = True  # True: automatic PH0 search by maximizing the real part
 READ_PHASE_FROM_PROCS = False  # set True to read ph0/ph1 from TopSpin (procs) — takes priority over AUTO_PH0
 REFERENCE_SHIFT_PPM = 2  # additive shift applied to the ppm axis (referencing) — same convention as pipeline_1d.py
-ZF_FACTOR = 1  # zero-filling: 1=none, 2=double, 4=quadruple
+ZF_FACTOR = 1  # zero-filling multiplier: total FFT length = N*(1+ZF_FACTOR) — so
+                 # 0=none, 1=double, 3=quadruple (NOT 1=none/2=double/4=quadruple;
+                 # fixed 18/08, same convention as pipeline_1d.py)
 PEAK_PPM_WINDOW = (30, -30)  # window to search for the peak max (same span as your ZOOM)
 OUTPUT_NAME = "T1_recovery_fit"
 # ================================================
@@ -107,78 +109,93 @@ def biexp_recovery(t, M0, f, T1a, T1b):
     return M0 * (1 - f * np.exp(-t / T1a) - (1 - f) * np.exp(-t / T1b))
 
 
-# === PROCESSING ===
-D1_list, I_list, ph0_list = [], [], []
+if __name__ == "__main__":
+    # === PROCESSING ===
+    # Guarded under __main__ (fixed 18/08) so this module can be imported
+    # (e.g. by tests, for biexp_recovery / get_peak_intensity / process_1d_spectrum)
+    # without immediately trying to read the hardcoded DATASETS paths — same
+    # convention already applied to relaxation_T2_components.py.
+    D1_list, I_list, ph0_list = [], [], []
 
-for d1, path in sorted(DATASETS.items()):
-    print(f"\nD1 = {d1} s  ({path})")
-    try:
-        delta, spectrum, bruker_dic, ph0_used = process_1d_spectrum(
-            path, LB, PH0_MANUAL, PH1, ZF_FACTOR,
-            auto_ph0=AUTO_PH0, read_phase_from_procs=READ_PHASE_FROM_PROCS,
-            reference_shift_ppm=REFERENCE_SHIFT_PPM
-        )
-    except OSError as e:
-        print(f"  SKIPPED — could not read dataset: {e}")
-        continue
-    intensity, peak_ppm = get_peak_intensity(delta, spectrum.real, PEAK_PPM_WINDOW)
-    print(f"  peak at {peak_ppm:.3f} ppm, intensity = {intensity:.4e}")
-    D1_list.append(d1)
-    I_list.append(intensity)
-    ph0_list.append(ph0_used)
+    for d1, path in sorted(DATASETS.items()):
+        print(f"\nD1 = {d1} s  ({path})")
+        try:
+            delta, spectrum, bruker_dic, ph0_used = process_1d_spectrum(
+                path, LB, PH0_MANUAL, PH1, ZF_FACTOR,
+                auto_ph0=AUTO_PH0, read_phase_from_procs=READ_PHASE_FROM_PROCS,
+                reference_shift_ppm=REFERENCE_SHIFT_PPM
+            )
+        except OSError as e:
+            print(f"  SKIPPED — could not read dataset: {e}")
+            continue
+        intensity, peak_ppm = get_peak_intensity(delta, spectrum.real, PEAK_PPM_WINDOW)
+        print(f"  peak at {peak_ppm:.3f} ppm, intensity = {intensity:.4e}")
+        D1_list.append(d1)
+        I_list.append(intensity)
+        ph0_list.append(ph0_used)
 
-D1 = np.array(D1_list)
-I = np.array(I_list)
+    D1 = np.array(D1_list)
+    I = np.array(I_list)
 
-if len(D1) < 4:
-    print("\nNeed at least 4 usable points for a stable biexponential fit.")
-    raise SystemExit
+    if len(D1) < 5:
+        # biexp_recovery has 4 free parameters (M0, f, T1a, T1b) — need strictly
+        # more data points than parameters for curve_fit to be well-posed.
+        print("\nNeed at least 5 usable points for a stable biexponential fit.")
+        raise SystemExit
 
-p0 = [1.1 * I.max(), 0.2, 0.5, D1[D1 > D1.max() / 4].mean()]
-bounds = ([0.5 * I.max(), 0, 0.001, 1], [5 * I.max(), 1, 20, 500])
-popt, pcov = curve_fit(biexp_recovery, D1, I, p0=p0, maxfev=50000, bounds=bounds)
-perr = np.sqrt(np.diag(pcov))
-M0, f, T1fast, T1slow = popt
-M0e, fe, T1faste, T1slowe = perr
+    p0 = [1.1 * I.max(), 0.2, 0.5, D1[D1 > D1.max() / 4].mean()]
+    bounds = ([0.5 * I.max(), 0, 0.001, 1], [5 * I.max(), 1, 20, 500])
+    # CAUTION (fixed 18/08): sigma=I was missing here. The T1 recovery curve spans
+    # a wide dynamic range (weak signal at short D1, near-full recovery at long
+    # D1) — an unweighted fit is dominated by the large-amplitude long-D1 points
+    # and effectively ignores the short-D1 points where T1_fast lives. This is
+    # the exact bug class already found and fixed once in this project (see
+    # fit_T1_recovery.py in the working Library_nmr scripts) that had regressed
+    # here in the Portfolio copy. Do not remove sigma=I without re-checking the
+    # residuals at short D1.
+    popt, pcov = curve_fit(biexp_recovery, D1, I, p0=p0, sigma=I, maxfev=50000, bounds=bounds)
+    perr = np.sqrt(np.diag(pcov))
+    M0, f, T1fast, T1slow = popt
+    M0e, fe, T1faste, T1slowe = perr
 
-print("\n--- T1 biexponential recovery fit ---")
-print(f"M0        = {M0:.4e} +/- {M0e:.2e}")
-print(f"T1_fast   = {T1fast:.3g} s  +/- {T1faste:.2g} s   (fraction = {f*100:.1f}% +/- {fe*100:.1f}%)")
-print(f"T1_slow   = {T1slow:.3g} s  +/- {T1slowe:.2g} s   (fraction = {(1-f)*100:.1f}%)")
+    print("\n--- T1 biexponential recovery fit ---")
+    print(f"M0        = {M0:.4e} +/- {M0e:.2e}")
+    print(f"T1_fast   = {T1fast:.3g} s  +/- {T1faste:.2g} s   (fraction = {f*100:.1f}% +/- {fe*100:.1f}%)")
+    print(f"T1_slow   = {T1slow:.3g} s  +/- {T1slowe:.2g} s   (fraction = {(1-f)*100:.1f}%)")
 
-resid = I - biexp_recovery(D1, *popt)
-rel_resid = 100 * resid / I
-print("\nrelative residuals (%):", np.round(rel_resid, 2))
-if np.any(np.abs(rel_resid) > 15):
-    print("WARNING: some points have >15% residual — check those spectra "
-          "(bad phasing, wrong RG, or a point that needs excluding).")
+    resid = I - biexp_recovery(D1, *popt)
+    rel_resid = 100 * resid / I
+    print("\nrelative residuals (%):", np.round(rel_resid, 2))
+    if np.any(np.abs(rel_resid) > 15):
+        print("WARNING: some points have >15% residual — check those spectra "
+              "(bad phasing, wrong RG, or a point that needs excluding).")
 
-# --- export (same pandas/CSV convention as pipeline_1d.py) ---
-df = pd.DataFrame({"D1_s": D1, "Intensity": I, "PH0_deg": ph0_list, "residual_pct": rel_resid})
-df.to_csv(f"{OUTPUT_NAME}.csv", index=False)
-print(f"\nResults exported to {OUTPUT_NAME}.csv")
+    # --- export (same pandas/CSV convention as pipeline_1d.py) ---
+    df = pd.DataFrame({"D1_s": D1, "Intensity": I, "PH0_deg": ph0_list, "residual_pct": rel_resid})
+    df.to_csv(f"{OUTPUT_NAME}.csv", index=False)
+    print(f"\nResults exported to {OUTPUT_NAME}.csv")
 
-# --- plot ---
-t_fit = np.logspace(np.log10(D1.min() / 2), np.log10(D1.max() * 1.3), 400)
-y_fit = biexp_recovery(t_fit, *popt)
+    # --- plot ---
+    t_fit = np.logspace(np.log10(D1.min() / 2), np.log10(D1.max() * 1.3), 400)
+    y_fit = biexp_recovery(t_fit, *popt)
 
-fig, ax = plt.subplots(figsize=(8, 5.5))
-ax.scatter(D1, I, color="blue", s=55, zorder=3, label="data")
-ax.plot(t_fit, y_fit, color="red", lw=1.5, zorder=2, label="biexponential fit")
-ax.set_xscale("log")
-ax.set_xlabel("Recovery delay D1 (s)")
-ax.set_ylabel("Intensity (a.u.)")
-ax.set_title(r"$^7$Li T$_1$ recovery (onepulse series)")
+    fig, ax = plt.subplots(figsize=(8, 5.5))
+    ax.scatter(D1, I, color="blue", s=55, zorder=3, label="data")
+    ax.plot(t_fit, y_fit, color="red", lw=1.5, zorder=2, label="biexponential fit")
+    ax.set_xscale("log")
+    ax.set_xlabel("Recovery delay D1 (s)")
+    ax.set_ylabel("Intensity (a.u.)")
+    ax.set_title(r"$^7$Li T$_1$ recovery (onepulse series)")
 
-textstr = (
-    f"$T_1$ slow = {T1slow:.1f} +/- {T1slowe:.1f} s  ({(1-f)*100:.1f}%)\n"
-    f"$T_1$ fast = {T1fast:.2f} +/- {T1faste:.2f} s  ({f*100:.1f}%)"
-)
-ax.text(0.97, 0.05, textstr, transform=ax.transAxes, fontsize=10.5,
-         va="bottom", ha="right",
-         bbox=dict(boxstyle="round", facecolor="white", edgecolor="gray", alpha=0.9))
-ax.legend(loc="upper left", frameon=False)
-ax.spines["top"].set_visible(False)
-ax.spines["right"].set_visible(False)
-plt.savefig(f"{OUTPUT_NAME}.pdf")
-plt.show()
+    textstr = (
+        f"$T_1$ slow = {T1slow:.1f} +/- {T1slowe:.1f} s  ({(1-f)*100:.1f}%)\n"
+        f"$T_1$ fast = {T1fast:.2f} +/- {T1faste:.2f} s  ({f*100:.1f}%)"
+    )
+    ax.text(0.97, 0.05, textstr, transform=ax.transAxes, fontsize=10.5,
+             va="bottom", ha="right",
+             bbox=dict(boxstyle="round", facecolor="white", edgecolor="gray", alpha=0.9))
+    ax.legend(loc="upper left", frameon=False)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    plt.savefig(f"{OUTPUT_NAME}.pdf")
+    plt.show()

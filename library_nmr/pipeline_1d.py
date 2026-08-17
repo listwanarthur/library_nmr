@@ -21,7 +21,9 @@ READ_PHASE_FROM_PROCS = False  # set True to read ph0/ph1 from TopSpin (procs) �
 REFERENCE_SHIFT_PPM = 2  # additive shift applied to the ppm axis (referencing).
                             #   REFERENCE_SHIFT_PPM = expected_literature_position - current_measured_position
                             # -> ppm_min/ppm_max in PEAKS and ZOOM must be adjusted accordingly.
-ZF_FACTOR = 1  # zero-filling: 1=none, 2=double, 4=quadruple
+ZF_FACTOR = 1  # zero-filling multiplier: total FFT length = N*(1+ZF_FACTOR) — so
+                 # 0=none, 1=double, 3=quadruple (NOT 1=none/2=double/4=quadruple;
+                 # fixed 18/08, the old comment didn't match np.concatenate below)
 PEAKS = [
     # A "group" = a ppm window in which ONE OR MORE pseudo-Voigt profiles are
     # fitted SIMULTANEOUSLY (deconvolution of overlapping peaks).
@@ -39,7 +41,7 @@ PEAKS = [
     #   Must be re-adjusted whenever REFERENCE_SHIFT_PPM changes (the peak
     #   moves along with it).
     {
-        "ppm_min": -23, "ppm_max": 27,  # +1.3 ppm shift applied
+        "ppm_min": -23, "ppm_max": 27,  # window adjusted for REFERENCE_SHIFT_PPM = 2 (see line 21)
         "p0": [
             [3.5e7, 0.6, 5.8,  0.99],  # narrow component — eta well-determined, left free
             [1.0e7, 0.6, 15,   0.5 ],  # broad component — eta poorly constrained -> fixed below
@@ -159,7 +161,12 @@ def export(results, base_name, delta, signal, percentages=None, zoom=None):
 
     residual = signal.copy()
     for r in results:
-        mask = (delta >= r["delta_peak"][0]) & (delta <= r["delta_peak"][-1])
+        # delta may be descending (ppm axis reversed relative to increasing
+        # frequency) — delta_peak[0]/delta_peak[-1] then have min/max swapped,
+        # making this mask self-contradictory (always empty). Use min()/max()
+        # instead so it works regardless of delta's ordering. (fixed 18/08)
+        lo, hi = min(r["delta_peak"]), max(r["delta_peak"])
+        mask = (delta >= lo) & (delta <= hi)
         residual[mask] -= pseudo_voigt(delta[mask], *r["popt"])
     axes2 = axes.twinx()
     axes2.plot(delta, residual, color="gray", linewidth=0.5, alpha=0.5, label="residual")

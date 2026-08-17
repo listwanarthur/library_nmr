@@ -268,8 +268,13 @@ for c in range(n_components):
             print(f"  WARNING: relative T1 uncertainty {err_T1/T1*100:.0f}% — unreliable fit "
                   f"for this component (check tau range / sign change above).")
         results_per_component.append({"M0": M0, "T1": T1, "err_T1": err_T1, "A": A, "err_A": err_A})
-    except RuntimeError:
-        print(f"Component {c+1}: T1 fit failed to converge.")
+    except (RuntimeError, ValueError) as e:
+        # ValueError included defensively (an infeasible initial guess raises
+        # ValueError, not RuntimeError) — same hardening applied to
+        # relaxation_T1sr_twocomponents.py, kept consistent here even though
+        # M0's bounds are (-inf, inf) so this specific failure mode is less
+        # likely for this script. (fixed 18/08)
+        print(f"Component {c+1}: T1 fit failed to converge ({type(e).__name__}: {e}).")
         results_per_component.append({"M0": np.nan, "T1": np.nan, "err_T1": np.nan, "A": np.nan, "err_A": np.nan})
 
 # --- Consistency check: both components should show a similar A (same physical inversion pulse) ---
