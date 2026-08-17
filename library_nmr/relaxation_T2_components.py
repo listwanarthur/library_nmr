@@ -39,27 +39,28 @@ from library_nmr.fitting import pseudo_voigt, sum_pseudo_voigt, fit_group
 # (was: L0=1 / exp253, the shortest echo delay). Diagnosed on real
 # data: the minimum echo delay achievable under MAS is one full rotor
 # period (tau_rotor=80us), because the echo must be rotor-synchronized.
-# broad's own T2 turned out to be only ~150us (see below) — comparable
-# to that 80us floor — so even the very FIRST T2 spectrum has already
-# lost a large, delay-dependent fraction of broad before it's ever
-# measured. Using it as the shape reference gave a distorted fit
-# (eta_narrow pinned at 1.000, narrow/broad integral split 82.7/17.3%)
-# that also produced a near-degenerate NNLS basis (narrow ~ pure
-# Lorentzian, heavy tails -> collinear with broad), which is why broad
-# used to vanish from NNLS beyond L0=2.
+# broad's own T2 turned out to be short enough to be comparable to that
+# 80us floor — so even the very FIRST T2 spectrum has already lost a
+# large, delay-dependent fraction of broad before it's ever measured.
+# Using it as the shape reference gave a badly distorted fit (eta_narrow
+# pinned near 1.000, a heavily skewed narrow/broad integral split) that
+# also produced a near-degenerate NNLS basis (narrow ~ pure Lorentzian,
+# heavy tails -> collinear with broad), which is why broad used to vanish
+# from NNLS beyond L0=2.
 #   FIX: the reference shape is now taken from a onepulse spectrum
 # (relaxation_T1_onepulse_series.py's D1 series, longest D1 = fully
 # relaxed = best S/N) instead. A single pulse has only the receiver's
 # hardware dead time (a few us) before acquisition starts, not a
 # rotor-period floor, so it captures broad's true equilibrium lineshape
-# undistorted. This reference gives eta_narrow=0.328 (not 1.000), an
-# integral split of ~31/69% narrow/broad (not 82.7/17.3%), and — most
-# importantly — lets NNLS keep broad above zero on 10/11 T2 points
+# undistorted. This reference gives a much more balanced eta_narrow and
+# integral split (broad is the majority population, not a minor one) and
+# — most importantly — lets NNLS keep broad above zero on 10/11 T2 points
 # instead of 2/11. See project notes for the full comparison (both
 # references tried, reconstructed-signal cross-check against
-# relaxation_T2_echo_series.py's independent total intensity: ratio
-# 0.95-1.01 across most of the series with the corrected reference,
-# confirming it isn't overfitting).
+# relaxation_T2_echo_series.py's independent total intensity, confirming
+# it isn't overfitting). Exact split percentages are not reproduced here
+# — this repository is public and those numbers are part of an
+# unpublished manuscript.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
@@ -106,20 +107,20 @@ REFERENCE_PATH = r"D:\Postdoc\Datas\LLZO-400-aug26\236"
 # Per-component decay model for STEP 3. Both components turned out to need
 # TWO relaxation times, not one (see project notes for the full story).
 #
-# VERIFIED FINAL NUMBERS (17/08, full 17-point series incl. exp270-275):
-#   narrow: T2_fast=250.5+/-22.9us (99.2%), T2_slow=9768.9+/-592.6us (0.8%)  [17/17 pts]
-#   broad:  T2_fast=155.3+/-19.4us (99.9%), T2_slow=5304.5+/-1022.8us (0.1%) [14/17 pts]
+# NOTE: exact fitted T2_fast/T2_slow values (and error bars/fractions) for
+# narrow and broad, on the full 17-point series (incl. exp270-275), are not
+# reproduced here — this repository is public and those numbers are part
+# of an unpublished manuscript.
 # broad becomes undetectable (NNLS zeroes it) beyond L0=188 (tau~15ms) — the
 # 3 longest new delays (250/313/375) constrain narrow only. This is a
 # genuine physical limit (broad's slow tail really is below the noise floor
 # past ~15ms), not a fitting problem; read broad's T2_slow as "well below
 # ~15ms" rather than a precise number given its wide error bar.
-# narrow's T2_slow improved substantially with the extension (was
-# 6761.7+/-1642us on the original 11-point series; now 9768.9+/-592.6us,
-# ~64% tighter error bar). T2_fast for both components stayed consistent
-# across the extension (within error bars of the original 11-point values:
-# narrow was 243.7+/-22.4us, broad was 149.1+/-8.2us) — a good independent
-# check that the extension didn't disturb the well-constrained parameters.
+# narrow's T2_slow improved substantially (tighter error bar) with the
+# extension relative to the original 11-point series. T2_fast for both
+# components stayed consistent across the extension (within error bars of
+# the original 11-point values) — a good independent check that the
+# extension didn't disturb the well-constrained parameters.
 # Figure: T2_components_fit_v3.png.
 COMPONENT_DECAY_MODEL = {"narrow (fine)": "biexp", "broad (large)": "biexp"}
 
@@ -135,15 +136,17 @@ OUTPUT_NAME = "T2_components_fit"
 # Same convention as pipeline_1d.py's PEAKS — used ONCE, on the reference
 # spectrum only, to determine position/width/eta for each component.
 # Copy your latest finalized numbers here before running.
-# NOTE on the p0 comments below: the ~78%/~22% split came from fitting an
-# ECHO spectrum (dead-time-limited, see docstring) and is now known to be
-# wrong. The corrected split (onepulse reference, exp236) is ~31% narrow /
-# ~69% broad — broad is the MAJORITY population, not a minor one.
+# NOTE on the p0 comments below: the split obtained from fitting an ECHO
+# spectrum (dead-time-limited, see docstring) is now known to be wrong and
+# heavily skewed toward narrow. The corrected split (onepulse reference,
+# exp236) is much more balanced — broad is the MAJORITY population, not a
+# minor one. Exact percentages not reproduced here (public repo,
+# unpublished manuscript).
 REFERENCE_PEAKS = {
     "ppm_min": -23, "ppm_max": 27,
     "p0": [
-        [3.5e7, 0.6, 5.8,  0.99],  # narrow component (fine, ~31% of total area, corrected)
-        [1.0e7, 0.6, 15,   0.5 ],  # broad component (large, eta=0, ~69% of total area, corrected)
+        [3.5e7, 0.6, 5.8,  0.99],  # narrow component (fine, corrected reference)
+        [1.0e7, 0.6, 15,   0.5 ],  # broad component (large, eta=0, majority population, corrected reference)
     ],
     "eta_fixed": [None, 0.0],
     "width_bounds": [(0, 8), (8, 100)],

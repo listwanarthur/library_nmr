@@ -25,13 +25,16 @@ from scipy.optimize import curve_fit
 from library_nmr.relaxation_T1_onepulse_series import biexp_recovery
 
 
-# Synthetic ground truth chosen to mimic the real LLZO series: wide D1 range,
-# small T1_fast fraction, T1_fast/T1_slow well separated -- exactly the
-# regime where unweighted fits are known to fail (see module docstring).
+# Synthetic ground truth chosen to mimic the SHAPE of the real LLZO series
+# (wide D1 range, small T1_fast fraction, T1_fast/T1_slow well separated --
+# exactly the regime where unweighted fits are known to fail, see module
+# docstring) WITHOUT reproducing the actual measured values -- this
+# repository is public and the real numbers are part of an unpublished
+# manuscript.
 TRUE_M0 = 1.0e7
 TRUE_F = 0.03
-TRUE_T1_FAST = 0.02
-TRUE_T1_SLOW = 25.5
+TRUE_T1_FAST = 0.015
+TRUE_T1_SLOW = 20.0
 D1 = np.array([0.05, 0.2, 0.5, 1, 2, 4, 8, 15, 30, 60, 120, 200])
 
 

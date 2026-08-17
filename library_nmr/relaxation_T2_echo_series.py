@@ -58,11 +58,12 @@ DATASETS = {
     # to extend relaxation_T2_components.py — added here too on 17/08 for
     # consistency between the global and per-component T2 fits.
     #
-    # RESULT (17/08, 17-point series): T2_fast=188.2+/-22.6us (99.6%),
-    # T2_slow=7514.4+/-568.1us (0.4%). T2_fast consistent with the original
-    # 11-point value (182.4+/-14.1us). T2_slow shifted up and the residuals
-    # at long delay are noisy (up to +/-40-55%) — noticeably worse than the
-    # clean fit obtained on the SAME extended delays in
+    # NOTE: exact fitted T2_fast/T2_slow values (and error bars/fractions)
+    # on the full 17-point series are not reproduced here — this repository
+    # is public and those numbers are part of an unpublished manuscript.
+    # T2_fast stayed consistent with the original 11-point value. T2_slow
+    # shifted and the residuals at long delay are noisy — noticeably worse
+    # than the clean fit obtained on the SAME extended delays in
     # relaxation_T2_components.py. Reason: at long tau the global
     # (non-decomposed) signal is a mix of narrow's still-decaying tail and
     # broad's collapsing tail — two different decay behaviors summed

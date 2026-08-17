@@ -41,18 +41,15 @@ from library_nmr.fitting import pseudo_voigt, sum_pseudo_voigt, fit_group
 # (exp224) has no clean replacement and is left out — it looked like an
 # outright outlier independent of this issue.
 #
-# VERIFIED FINAL NUMBERS (17/08, weighted fit, this DATASETS):
-#   narrow: T1_fast=0.0187+/-0.0041s (3.01%), T1_slow=25.01+/-0.89s (96.99%)
-#   broad:  T1_fast=0.0157+/-0.0043s (2.37%), T1_slow=26.23+/-0.77s (97.63%)
-# T1_slow remains close between narrow/broad (~1 sigma apart), consistent
-# with the spin-diffusion interpretation discussed below, though not as
-# tightly matched as the earlier unweighted-fit numbers suggested (those
-# were less reliable). Figure: T1_components_fit_v2.png.
+# NOTE: exact fitted values (T1_fast/T1_slow, error bars, fractions) for
+# narrow and broad are not reproduced here — this repository is public and
+# those numbers are part of an unpublished manuscript. Figure:
+# T1_components_fit_v2.png.
 #
 # narrow and broad come out with ESSENTIALLY THE SAME T1_slow (within
-# error bars) and a similar small T1_fast fraction (~2-3%), even
-# though their T2 is very different (T2_fast: narrow ~200-250us vs broad
-# ~150us — see relaxation_T2_components.py). This is expected, not a bug:
+# error bars) and a similarly small T1_fast fraction, even though their
+# T2 is very different (T2_fast narrow vs broad differ by roughly a
+# factor of ~1.5-2 — see relaxation_T2_components.py). This is expected, not a bug:
 # T1 is driven by fluctuations at the Larmor frequency, typically
 # dominated by a few relaxation "sinks" (paramagnetic impurities/defects)
 # rather than the local static coupling that sets T2. In a rigidly

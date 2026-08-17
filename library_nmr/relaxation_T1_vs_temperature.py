@@ -35,12 +35,14 @@ from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0
 # IMPORTANT — reference value for the RT sanity check below:
 # the 298K point in this VT series is meant to reproduce the 400M MAS
 # room-temperature result under the new static-probe configuration. Compare
-# it against the CORRECTED, weighted-fit value:
-#   T1_fast = 0.0164 +/- 0.0044 s (2.87%), T1_slow = 25.5 +/- 0.84 s (97.13%)
-# NOT the older unweighted value quoted in protocole_T1_temperature.docx
-# (T1_slow~29.4s/95.5%, T1_fast~0.37s/4.5%) — that number predates the
-# 17/08 weighting fix (see relaxation_T1_onepulse_series.py and project
-# notes) and is superseded. The script below checks this automatically.
+# it against the CORRECTED, weighted-fit value from
+# relaxation_T1_onepulse_series.py (17/08 fix) — NOT the older, unweighted
+# value quoted in protocole_T1_temperature.docx, which predates that fix
+# and is superseded. Fill in REF_298K_T1_SLOW / REF_298K_T1_FAST (and their
+# error bars) below from your own verified fit before running this script —
+# deliberately left blank here since this repository is public and those
+# numbers are part of an unpublished manuscript. The script checks this
+# automatically once filled in.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
@@ -158,11 +160,13 @@ TEMPERATURES = {
 
 # Reference RT values for the sanity check (weighted fit, 17/08 — see
 # relaxation_T1_onepulse_series.py). Do NOT replace with the older unweighted
-# numbers from protocole_T1_temperature.docx.
-REF_298K_T1_SLOW = 25.5      # s
-REF_298K_T1_SLOW_ERR = 0.84  # s
-REF_298K_T1_FAST = 0.0164    # s
-REF_298K_T1_FAST_ERR = 0.0044  # s
+# numbers from protocole_T1_temperature.docx. Left as None here (public
+# repo, unpublished numbers) — fill in from your own results before running;
+# the sanity check below is skipped automatically while these are None.
+REF_298K_T1_SLOW = None      # s -- e.g. 25.5
+REF_298K_T1_SLOW_ERR = None  # s
+REF_298K_T1_FAST = None      # s
+REF_298K_T1_FAST_ERR = None  # s
 RT_SANITY_TOLERANCE = 0.20   # warn if the new 298K T1_slow differs by more than 20%
 
 LB = 10  # line broadening in Hz — same as relaxation_T1_onepulse_series.py; revisit if the
@@ -341,7 +345,10 @@ if __name__ == "__main__":
 
     # --- RT sanity check against the corrected (weighted-fit) reference ---
     rt_row = df[df["T_K"] == 298]
-    if not rt_row.empty and not np.isnan(rt_row["T1_slow"].iloc[0]):
+    if REF_298K_T1_SLOW is None:
+        print("\n--- RT (298K) sanity check --- SKIPPED (REF_298K_T1_SLOW is None; "
+              "fill it in from your own verified fit -- see module docstring)")
+    elif not rt_row.empty and not np.isnan(rt_row["T1_slow"].iloc[0]):
         t1s = rt_row["T1_slow"].iloc[0]
         dev = abs(t1s - REF_298K_T1_SLOW) / REF_298K_T1_SLOW
         print(f"\n--- RT (298K) sanity check ---")
@@ -350,7 +357,7 @@ if __name__ == "__main__":
         if dev > RT_SANITY_TOLERANCE:
             print(f"  WARNING: deviates by {dev*100:.0f}% from the corrected RT reference -- "
                   f"check probe calibration/phasing before trusting the rest of the series. "
-                  f"(Do NOT compare against the older, superseded 29.4s/0.37s value from "
+                  f"(Do NOT compare against the older, superseded unweighted value from "
                   f"protocole_T1_temperature.docx -- that number predates the 17/08 weighting fix.)")
         else:
             print(f"  OK -- within {RT_SANITY_TOLERANCE*100:.0f}% of the corrected reference.")

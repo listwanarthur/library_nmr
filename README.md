@@ -84,8 +84,10 @@ windows), then `python pipeline_1d.py`.
 
 Applied to ⁷Li in LLZO, this pipeline separates the resonance into two
 lithium environments — a narrow, mobile component and a broad, static
-one — with populations around 78%/22%, consistent with the expected
-mixed-mobility picture in this material.
+one — consistent with the expected mixed-mobility picture in this
+material. (Exact population split not reproduced here — part of an
+unpublished manuscript; see `examples/library_nmr_demo.ipynb` for a
+synthetic worked example with known ground-truth values instead.)
 
 *(Add a plot here, e.g. `results.pdf` from `pipeline_1d.py`, showing the
 spectrum with the two-component fit overlaid.)*

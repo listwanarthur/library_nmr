@@ -29,7 +29,7 @@ from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0
 #
 # CAUTION / HISTORY (15-17/08): a systematic ~15-18% residual trend at short
 # D1 was first observed and (wrongly) attributed to DS=0 (no dummy scans,
-# insufficient pre-equilibration for D1 short compared to T1_slow~28s).
+# insufficient pre-equilibration for D1 short compared to T1_slow).
 # exp266-269 were reacquired with DS=16, then DS scaled per-point to target
 # ~5xT1_slow of pre-equilibration time (exp281-286, DS=3000/1000/750/500/
 # 300/215 for D1=0.05/0.15/0.2/0.3/0.5/0.7) — the residual pattern was
@@ -42,8 +42,12 @@ from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0
 # (exp224) has no clean replacement and is left out — it looked like an
 # outright outlier independent of the weighting issue.
 #
-# VERIFIED FINAL NUMBERS (17/08, weighted fit, this DATASETS):
-#   T1_fast = 0.0164 +/- 0.0044 s (2.87%), T1_slow = 25.5 +/- 0.84 s (97.13%)
+# NOTE: the exact fitted T1_fast/T1_slow values (and error bars) obtained
+# from this DATASETS are not reproduced here — this repository is public
+# and those numbers are part of an unpublished manuscript. The fix itself
+# is verified quantitatively in tests/test_relaxation_T1_sigma_weighting.py
+# (weighted fit recovers a known synthetic T1_fast within 15%, unweighted
+# does not) rather than by quoting the real result.
 DATASETS = {
     # D1 (s) : path to the Bruker experiment folder
     0.05: r"D:\Postdoc\Datas\LLZO-400-aug26\281",
