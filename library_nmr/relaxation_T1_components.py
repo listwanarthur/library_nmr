@@ -23,12 +23,34 @@ from library_nmr.fitting import pseudo_voigt, sum_pseudo_voigt, fit_group
 # D1 in this same series (best S/N, fully relaxed) is a perfectly good,
 # undistorted reference. No external reference spectrum needed.
 #
-# Result you should expect (verified on the validated series, exp224-236,
-# BEFORE the 18/08 sigma= weighting fix below — re-verify this range after
-# re-running with the fix, the numbers will likely shift; see fit_T1_components.py
-# in Library_nmr for what the equivalent fix changed there):
+# Same validated series as fit_T1_recovery.py / relaxation_T1_onepulse_series.py
+# (exp224-236, NS=32, onepulse.al), extended with extra short-D1 points added
+# 14-15/08 (exp266-269 in the original characterization) then re-acquired as
+# exp281-286 to better resolve T1_fast per component, previously poorly
+# constrained by the D1=0.1s floor (see the CAUTION note below and project
+# notes).
+#
+# CAUTION / HISTORY (15-17/08): a ~15-18% systematic residual trend at short
+# D1 was first (wrongly) attributed to DS=0 (insufficient dummy-scan
+# pre-equilibration). Reacquiring with DS=16, then with DS scaled to
+# ~5xT1_slow per point (exp281-286), changed NOTHING — the real cause was
+# that the fit below was UNWEIGHTED, so ordinary least squares is dominated
+# by the large-amplitude long-D1 points and effectively ignores the small-
+# amplitude short-D1 points (exactly where T1_fast lives). Adding
+# sigma=y_in fixed it immediately (see the curve_fit call below). D1=0.1
+# (exp224) has no clean replacement and is left out — it looked like an
+# outright outlier independent of this issue.
+#
+# VERIFIED FINAL NUMBERS (17/08, weighted fit, this DATASETS):
+#   narrow: T1_fast=0.0187+/-0.0041s (3.01%), T1_slow=25.01+/-0.89s (96.99%)
+#   broad:  T1_fast=0.0157+/-0.0043s (2.37%), T1_slow=26.23+/-0.77s (97.63%)
+# T1_slow remains close between narrow/broad (~1 sigma apart), consistent
+# with the spin-diffusion interpretation discussed below, though not as
+# tightly matched as the earlier unweighted-fit numbers suggested (those
+# were less reliable). Figure: T1_components_fit_v2.png.
+#
 # narrow and broad come out with ESSENTIALLY THE SAME T1_slow (within
-# error bars) and a similar small T1_fast fraction (~3.5-4.5%, PRE-FIX), even
+# error bars) and a similar small T1_fast fraction (~2-3%), even
 # though their T2 is very different (T2_fast: narrow ~200-250us vs broad
 # ~150us — see relaxation_T2_components.py). This is expected, not a bug:
 # T1 is driven by fluctuations at the Larmor frequency, typically
@@ -40,23 +62,18 @@ from library_nmr.fitting import pseudo_voigt, sum_pseudo_voigt, fit_group
 # hence T2 tells narrow and broad apart, T1 mostly doesn't. See project
 # notes for the full discussion and the T1(T)/T2(T) comparison this
 # motivates.
-#
-# CAUTION: the T1_fast VALUE (not its ~4% fraction) is poorly constrained
-# by this D1 grid in every fit attempted so far (total intensity, narrow,
-# broad) — it converges near its lower bound regardless of which signal
-# it's fit to. The shortest D1 here (0.1s) is still a bit long relative to
-# the true T1_fast (~0.37s from the original, more finely-spaced total-
-# intensity characterization in relaxation_T1_onepulse_series.py). Trust
-# the T1_fast FRACTION, not its time constant, from this script.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
-# Same validated series as relaxation_T1_onepulse_series.py (exp224-236, NS=32, onepulse.al).
+# Same validated series as fit_T1_recovery.py / relaxation_T1_onepulse_series.py.
 DATASETS = {
     # D1 (s) : path to the Bruker experiment folder
-    0.1: r"D:\Postdoc\Datas\LLZO-400-aug26\224",
-    0.3: r"D:\Postdoc\Datas\LLZO-400-aug26\225",
-    0.5: r"D:\Postdoc\Datas\LLZO-400-aug26\226",
+    0.05: r"D:\Postdoc\Datas\LLZO-400-aug26\281",
+    0.15: r"D:\Postdoc\Datas\LLZO-400-aug26\282",
+    0.2:  r"D:\Postdoc\Datas\LLZO-400-aug26\283",
+    0.3:  r"D:\Postdoc\Datas\LLZO-400-aug26\284",
+    0.5:  r"D:\Postdoc\Datas\LLZO-400-aug26\285",
+    0.7:  r"D:\Postdoc\Datas\LLZO-400-aug26\286",
     1:   r"D:\Postdoc\Datas\LLZO-400-aug26\227",
     2:   r"D:\Postdoc\Datas\LLZO-400-aug26\228",
     4:   r"D:\Postdoc\Datas\LLZO-400-aug26\229",
@@ -242,9 +259,8 @@ if __name__ == "__main__":
             fit_params.append({"popt": tuple(popt), "perr": tuple(perr)})
             M0, f, T1fast, T1slow = popt
             _, fe, T1faste, T1slowe = perr
-            print(f"\n{name}: T1_fast = {T1fast:.3f} +/- {T1faste:.3f} s  (fraction {f*100:.1f}%, "
-                  f"value poorly constrained by this D1 grid — see module docstring)  "
-                  f"T1_slow = {T1slow:.2f} +/- {T1slowe:.2f} s  (fraction {(1-f)*100:.1f}%)  "
+            print(f"\n{name}: T1_fast = {T1fast:.4f} +/- {T1faste:.4f} s  (fraction {f*100:.2f}%)  "
+                  f"T1_slow = {T1slow:.2f} +/- {T1slowe:.2f} s  (fraction {(1-f)*100:.2f}%)  "
                   f"(fit on {usable.sum()}/{len(y)} points)")
             rel_resid = 100 * (y_in - biexp_recovery(t_in, *popt)) / y_in
             print(f"  relative residuals (%): {np.round(rel_resid, 2)}")
@@ -274,17 +290,18 @@ if __name__ == "__main__":
         if fit_params[i] is not None:
             popt, perr = fit_params[i]["popt"], fit_params[i]["perr"]
             M0, f, T1fast, T1slow = popt
-            _, _, _, T1slowe = perr
+            _, _, T1faste, T1slowe = perr
             ax.plot(t_fit, biexp_recovery(t_fit, *popt), color=COMPONENT_COLORS[i], lw=1.8, zorder=2,
                     label=f"{name} — biexponential fit")
-            textlines.append(f"{name}: T1 slow = {T1slow:.1f}±{T1slowe:.1f}s ({(1-f)*100:.1f}%)")
+            textlines.append(f"{name}: T1_fast={T1fast:.3f}±{T1faste:.3f}s ({f*100:.1f}%), "
+                              f"T1_slow={T1slow:.1f}±{T1slowe:.1f}s ({(1-f)*100:.1f}%)")
 
     ax.set_xscale("log")
     ax.set_xlabel("Recovery delay D1 (s)")
     ax.set_ylabel("Component amplitude (a.u.)")
     ax.set_title(r"$^7$Li T$_1$ per component (fixed shape, NNLS amplitudes)")
     if textlines:
-        textstr = "\n".join(textlines) + "\n(T1 fast fraction ~4% in both, value poorly\nconstrained by this D1 grid — not shown)"
+        textstr = "\n".join(textlines)
         ax.text(0.02, 0.95, textstr, transform=ax.transAxes, fontsize=9.5,
                 va="top", ha="left",
                 bbox=dict(boxstyle="round", facecolor="white", edgecolor="gray", alpha=0.9))

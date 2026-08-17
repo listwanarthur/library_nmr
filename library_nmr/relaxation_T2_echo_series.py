@@ -54,6 +54,28 @@ DATASETS = {
     80:  r"D:\Postdoc\Datas\LLZO-400-aug26\262",
     90:  r"D:\Postdoc\Datas\LLZO-400-aug26\263",
     100: r"D:\Postdoc\Datas\LLZO-400-aug26\264",
+    # Extended tau points added 14-15/08 (exp270-275), same acquisitions used
+    # to extend relaxation_T2_components.py — added here too on 17/08 for
+    # consistency between the global and per-component T2 fits.
+    #
+    # RESULT (17/08, 17-point series): T2_fast=188.2+/-22.6us (99.6%),
+    # T2_slow=7514.4+/-568.1us (0.4%). T2_fast consistent with the original
+    # 11-point value (182.4+/-14.1us). T2_slow shifted up and the residuals
+    # at long delay are noisy (up to +/-40-55%) — noticeably worse than the
+    # clean fit obtained on the SAME extended delays in
+    # relaxation_T2_components.py. Reason: at long tau the global
+    # (non-decomposed) signal is a mix of narrow's still-decaying tail and
+    # broad's collapsing tail — two different decay behaviors summed
+    # together, which a single global biexponential describes less well
+    # than fitting each component separately. Treat this global T2_slow as
+    # a rough cross-check only; relaxation_T2_components.py's per-component
+    # values are the reliable source. Figure: T2_echosolide_fit_v2.png.
+    125: r"D:\Postdoc\Datas\LLZO-400-aug26\270",
+    150: r"D:\Postdoc\Datas\LLZO-400-aug26\271",
+    188: r"D:\Postdoc\Datas\LLZO-400-aug26\272",
+    250: r"D:\Postdoc\Datas\LLZO-400-aug26\273",
+    313: r"D:\Postdoc\Datas\LLZO-400-aug26\274",
+    375: r"D:\Postdoc\Datas\LLZO-400-aug26\275",
 }
 
 # Points known to be at/below the noise floor (e.g. old 243 at L0=100 with

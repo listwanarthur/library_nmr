@@ -19,20 +19,49 @@ from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
+# NOTE (filled in 18/08 from the working Library_nmr copy, fit_T1_recovery.py):
+# this is the CURRENT VALIDATED series (exp281-286 for short D1, exp227-236 for
+# the rest, NS=32) — identified by scanning acqus D1/PULPROG/NS across the
+# whole dataset folder. The previous 0.3->251 / 0.5->252 entries here were from
+# an OLDER, ABANDONED short series (exp250-252, D1=0.1/0.3/0.5 only, never
+# completed past D1=0.5) — NOT the same acquisitions as 284/285 below, and not
+# usable on their own for a full biexponential. Do not mix them back in.
+#
+# CAUTION / HISTORY (15-17/08): a systematic ~15-18% residual trend at short
+# D1 was first observed and (wrongly) attributed to DS=0 (no dummy scans,
+# insufficient pre-equilibration for D1 short compared to T1_slow~28s).
+# exp266-269 were reacquired with DS=16, then DS scaled per-point to target
+# ~5xT1_slow of pre-equilibration time (exp281-286, DS=3000/1000/750/500/
+# 300/215 for D1=0.05/0.15/0.2/0.3/0.5/0.7) — the residual pattern was
+# UNCHANGED either time. The real cause: the fit was UNWEIGHTED (no `sigma=`
+# in curve_fit), so ordinary least squares minimizes ABSOLUTE residuals and
+# is dominated by the large-intensity long-D1 points; the much smaller
+# short-D1 points (exactly where T1_fast lives) were effectively free to be
+# fit poorly without penalty. Adding `sigma=I` (see below) fixed the residual
+# pattern immediately, with no further acquisition changes needed. D1=0.1
+# (exp224) has no clean replacement and is left out — it looked like an
+# outright outlier independent of the weighting issue.
+#
+# VERIFIED FINAL NUMBERS (17/08, weighted fit, this DATASETS):
+#   T1_fast = 0.0164 +/- 0.0044 s (2.87%), T1_slow = 25.5 +/- 0.84 s (97.13%)
 DATASETS = {
     # D1 (s) : path to the Bruker experiment folder
-    0.3: r"D:\Postdoc\Datas\LLZO-400-aug26\251",
-    0.5: r"D:\Postdoc\Datas\LLZO-400-aug26\252",
-    1:   r"D:\Postdoc\Datas\LLZO-400-aug26\...",
-    2:   r"D:\Postdoc\Datas\LLZO-400-aug26\...",
-    4:   r"D:\Postdoc\Datas\LLZO-400-aug26\...",
-    8:   r"D:\Postdoc\Datas\LLZO-400-aug26\...",
-    10:  r"D:\Postdoc\Datas\LLZO-400-aug26\...",
-    20:  r"D:\Postdoc\Datas\LLZO-400-aug26\...",
-    40:  r"D:\Postdoc\Datas\LLZO-400-aug26\...",
-    80:  r"D:\Postdoc\Datas\LLZO-400-aug26\...",
-    120: r"D:\Postdoc\Datas\LLZO-400-aug26\...",
-    150: r"D:\Postdoc\Datas\LLZO-400-aug26\...",
+    0.05: r"D:\Postdoc\Datas\LLZO-400-aug26\281",
+    0.15: r"D:\Postdoc\Datas\LLZO-400-aug26\282",
+    0.2:  r"D:\Postdoc\Datas\LLZO-400-aug26\283",
+    0.3:  r"D:\Postdoc\Datas\LLZO-400-aug26\284",
+    0.5:  r"D:\Postdoc\Datas\LLZO-400-aug26\285",
+    0.7:  r"D:\Postdoc\Datas\LLZO-400-aug26\286",
+    1:   r"D:\Postdoc\Datas\LLZO-400-aug26\227",
+    2:   r"D:\Postdoc\Datas\LLZO-400-aug26\228",
+    4:   r"D:\Postdoc\Datas\LLZO-400-aug26\229",
+    8:   r"D:\Postdoc\Datas\LLZO-400-aug26\230",
+    10:  r"D:\Postdoc\Datas\LLZO-400-aug26\231",
+    20:  r"D:\Postdoc\Datas\LLZO-400-aug26\232",
+    40:  r"D:\Postdoc\Datas\LLZO-400-aug26\233",
+    80:  r"D:\Postdoc\Datas\LLZO-400-aug26\234",
+    120: r"D:\Postdoc\Datas\LLZO-400-aug26\235",
+    150: r"D:\Postdoc\Datas\LLZO-400-aug26\236",
 }
 LB = 10  # line broadening in Hz (10-200 Hz typical for solids)
 PH0_MANUAL = -103.394  # PHC0 in degrees, used only if AUTO_PH0 = False

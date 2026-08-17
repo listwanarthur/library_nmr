@@ -81,6 +81,18 @@ DATASETS = {
     80:  r"D:\Postdoc\Datas\LLZO-400-aug26\262",
     90:  r"D:\Postdoc\Datas\LLZO-400-aug26\263",
     100: r"D:\Postdoc\Datas\LLZO-400-aug26\264",
+    # Extended tau points added 14-15/08 (exp270-275) specifically to better
+    # constrain T2_slow (narrow and broad), which the original series left
+    # fragile at <1% of the signal each — see module docstring caveat and
+    # project notes. Acquired with higher NS (128 for L0=125/150/188, 192 for
+    # L0=250/313/375) to compensate for the weaker signal at these long
+    # delays, where mostly only the slow-relaxing tail remains.
+    125: r"D:\Postdoc\Datas\LLZO-400-aug26\270",
+    150: r"D:\Postdoc\Datas\LLZO-400-aug26\271",
+    188: r"D:\Postdoc\Datas\LLZO-400-aug26\272",
+    250: r"D:\Postdoc\Datas\LLZO-400-aug26\273",
+    313: r"D:\Postdoc\Datas\LLZO-400-aug26\274",
+    375: r"D:\Postdoc\Datas\LLZO-400-aug26\275",
 }
 
 # Reference spectrum for the one-time free shape fit (STEP 1) — deliberately
@@ -93,21 +105,22 @@ REFERENCE_PATH = r"D:\Postdoc\Datas\LLZO-400-aug26\236"
 
 # Per-component decay model for STEP 3. Both components turned out to need
 # TWO relaxation times, not one (see project notes for the full story).
-# Verified output of THIS script with the corrected (onepulse) reference:
-#   narrow: T2_fast=243.7+/-22.4us (99.1%), T2_slow=6761.7+/-1642us (0.9%)
-#   broad:  T2_fast=149.1+/-8.2us  (99.8%), T2_slow=3475.5+/-295us  (0.2%)
-# broad could NOT be fit at all with the old (echo-derived) reference shape
-# beyond 2 points; with the corrected reference it has 11/11 usable points,
-# enough to constrain a full biexponential.
-# CAUTION: both T2_slow values are minority fractions (<1%) and are quite
-# sensitive to fine methodological details — e.g. AUTO_PH0's search
-# resolution measurably shifted T2_slow in exploratory reruns (roughly
-# 2200-6800us for narrow depending on phase-search precision). Fixing
-# T2_fast and refitting only tightens the T2_slow error bars by ~10% — the
-# fragility is the small fraction itself, not the fit procedure. Treat
-# T2_slow as "a few ms, order of magnitude only" until a T2 series extended
-# to tau >> 8000us (or higher NS on the long-delay points) better
-# constrains it. T2_fast is solid and reproducible either way.
+#
+# VERIFIED FINAL NUMBERS (17/08, full 17-point series incl. exp270-275):
+#   narrow: T2_fast=250.5+/-22.9us (99.2%), T2_slow=9768.9+/-592.6us (0.8%)  [17/17 pts]
+#   broad:  T2_fast=155.3+/-19.4us (99.9%), T2_slow=5304.5+/-1022.8us (0.1%) [14/17 pts]
+# broad becomes undetectable (NNLS zeroes it) beyond L0=188 (tau~15ms) — the
+# 3 longest new delays (250/313/375) constrain narrow only. This is a
+# genuine physical limit (broad's slow tail really is below the noise floor
+# past ~15ms), not a fitting problem; read broad's T2_slow as "well below
+# ~15ms" rather than a precise number given its wide error bar.
+# narrow's T2_slow improved substantially with the extension (was
+# 6761.7+/-1642us on the original 11-point series; now 9768.9+/-592.6us,
+# ~64% tighter error bar). T2_fast for both components stayed consistent
+# across the extension (within error bars of the original 11-point values:
+# narrow was 243.7+/-22.4us, broad was 149.1+/-8.2us) — a good independent
+# check that the extension didn't disturb the well-constrained parameters.
+# Figure: T2_components_fit_v3.png.
 COMPONENT_DECAY_MODEL = {"narrow (fine)": "biexp", "broad (large)": "biexp"}
 
 LB = 10
