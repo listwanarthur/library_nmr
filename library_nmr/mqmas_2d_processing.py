@@ -3,24 +3,16 @@ import matplotlib.pyplot as plt
 import nmrglue as ng
 
 from library_nmr.core import find_grpdly_shift
+from library_nmr.agr_export import export_agr
 
 # ============================================================
 # MQMAS (TRIPLE-QUANTUM) 2D PROCESSING — nmr_library
 # Usage: edit the CONFIGURATION block below, then run.
-#
-# ASSUMED ACQUISITION SCHEME: States (hypercomplex) F1 acquisition, the most
-# common for 2-pulse / z-filter split-t1 MQMAS. This means the ser file is
-# assumed to contain 2*TD1 rows: for each t1 increment, one "cosine" (real)
-# row followed by one "sine" (imaginary) row (standard Bruker States
-# convention). If your actual pulse program uses TPPI, echo/antiecho, or a
-# different row ordering, the F1 combination step below (Step 3) will need
-# adjusting — send me the pulse program and I'll verify/adapt it.
-#
-# SPIN / COHERENCE ORDER: hardcoded for 7Li (I=3/2), which only has 3Q
-# (triple-quantum) as a practically usable multiple-quantum order. The
-# shearing ratio R=7/9 used below is the standard tabulated value for
-# I=3/2, p=3 (Massiot et al. 1996 / Amoureux et al. conventions). This is a
-# physical constant for this spin/order combination, not a free parameter.
+# Assumes States (hypercomplex) F1 acquisition: ser = 2*TD1 rows, cos/sin pairs
+# per t1 increment (standard Bruker States convention; TPPI/echo-antiecho would
+# need Step 3 adjusted).
+# Hardcoded for 7Li (I=3/2), 3Q order; shearing ratio R=7/9 is the tabulated
+# literature value for I=3/2,p=3 (Massiot et al. 1996 / Amoureux et al.).
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
@@ -39,14 +31,9 @@ OUTPUT_NAME = "MQMAS_2D"
 
 
 def shearing_ratio(I, p):
-    """Standard shearing ratio R(I,p) for MQMAS, from the general formula relating
-    p-quantum and single-quantum second-order quadrupolar shifts for a spin-I
-    central transition. Correct closed-form values are tabulated in the MQMAS
-    literature (Massiot et al. 1996; Amoureux, Fernandez, Frydman).
-    Only I=3/2 (p=3) is implemented here since that is the only practically
-    accessible order for 7Li; extend this dict if you later work with other
-    half-integer quadrupolar nuclei (23Na, 27Al, etc.).
-    """
+    """Standard shearing ratio R(I,p) for MQMAS (Massiot et al. 1996). Only
+    I=3/2 (p=3, 7Li) is tabulated; extend for other half-integer quadrupolar
+    nuclei (23Na, 27Al, ...) as needed."""
     table = {
         (1.5, 3): 7 / 9,   # 7Li, 23Na, ... (I=3/2), triple-quantum
     }
@@ -110,9 +97,7 @@ n_points_f2 = spectra_f2.shape[1]
 f2_freq = np.fft.fftshift(np.fft.fftfreq(n_points_f2, dt_F2))  # Hz
 delta_f2_ppm = (O1_F2 - f2_freq) / SFO1_F2
 
-# --- Step 2: build the complex F1 (t1) interferogram, States method ---
-# Standard States reconstruction: the REAL part of the F2-FFT'd "cosine" row
-# becomes Re(F1 series); the REAL part of the "sine" row becomes Im(F1 series).
+# --- Step 2: build complex F1 interferogram (States: Re = cos-row FFT real, Im = sin-row FFT real) ---
 cos_rows = spectra_f2[0::2].real  # (n_t1, n_points_f2)
 sin_rows = spectra_f2[1::2].real
 interferogram_f1 = cos_rows + 1j * sin_rows  # complex, shape (n_t1, n_points_f2)
@@ -133,22 +118,11 @@ w_f1 = np.exp(-t1_axis * LB_F1)
 interferogram_f1_apod = interferogram_f1 * w_f1[:, np.newaxis]
 
 # --- Step 4: shearing — applied as a linear phase ramp in the mixed (t1, F2) domain. ---
-# CAUTION (flagged 18/08, not silently changed — needs empirical verification against
-# real data, not just a literature derivation, since the correct sign here depends on
-# the coherence-pathway/echo-antiecho convention actually used during acquisition,
-# which this script cannot know on its own):
-#   By the Fourier shift theorem, multiplying a t1 column by exp(+i*2*pi*k*f2*t1)
-#   shifts that point of the F1 spectrum by +k*f2 (Hz) after the FFT; multiplying by
-#   exp(-i*2*pi*k*f2*t1) shifts it by -k*f2. The line below uses the MINUS sign
-#   (shift by -k*f2), which previously disagreed with an old comment claiming a "+"
-#   convention — that stale comment has been removed rather than "corrected", because
-#   the actually-correct sign depends on details (P-type vs N-type / echo vs antiecho
-#   selection in the pulse sequence used) that aren't recorded here.
-#   HOW TO CHECK: after running this script, the isotropic F1 projection should show
-#   NARROW, well-resolved ridges/peaks (that's the whole point of shearing). If instead
-#   the 2D ridges run diagonally / the isotropic projection looks broadened or doubled
-#   compared to the unsheared spectrum, flip the sign below (change -1j to +1j) and
-#   re-run.
+# CAUTION: the sign here depends on the coherence-pathway (echo/antiecho) convention
+# used at acquisition and can't be inferred from this script alone; currently uses the
+# MINUS sign. To verify: the F1 isotropic projection should show narrow, well-resolved
+# peaks — if the 2D ridges run diagonally or the projection looks broadened/doubled,
+# flip the sign below (-1j -> +1j) and re-run.
 k = shearing_ratio(SPIN_I, MQ_ORDER)
 print(f"Shearing ratio R(I={SPIN_I}, p={MQ_ORDER}) = {k:.4f}")
 
@@ -166,11 +140,9 @@ spectrum_2d = np.fft.fftshift(np.fft.fft(interferogram_zf, axis=0), axes=0)
 f1_freq = np.fft.fftshift(np.fft.fftfreq(n_t1_zf, dt_F1))  # Hz, SHEARED F1 axis
 delta_f1_ppm = (O1_F1 - f1_freq) / SFO1_F1  # ppm, sheared indirect axis (isotropic dimension)
 
-# --- Step 6: projections ---
-# Sheared spectrum: isotropic peaks now line up at constant F1 -> a simple sum over
-# F2 gives the (high-resolution) isotropic projection directly.
+# --- Step 6: projections --- (sheared -> sum over F2 = high-res isotropic projection)
 projection_f1_isotropic = np.sum(np.abs(spectrum_2d), axis=1)
-# Sum over F1 gives the conventional MAS-averaged (broadened) 1D lineshape, for comparison.
+# Sum over F1 = conventional MAS-averaged (broadened) 1D lineshape, for comparison.
 projection_f2_mas = np.sum(np.abs(spectrum_2d), axis=0)
 
 # === FIGURE ===
@@ -201,6 +173,21 @@ ax_right.axis("off")
 
 plt.savefig(f"{OUTPUT_NAME}.pdf")
 plt.show()
+
+# The 2D contour itself is not exportable to .agr (Grace/export_agr is 1D-only);
+# only the F1/F2 1D projections are exported below.
+export_agr(
+    f"{OUTPUT_NAME}_projection_f2.agr",
+    series=[dict(x=delta_f2_ppm, y=projection_f2_mas, mode="line", color="blue",
+                 legend="F2 MAS projection")],
+    xlabel="F2 — MAS dimension (ppm)", ylabel="Intensity (a.u.)", invert_x=True,
+)
+export_agr(
+    f"{OUTPUT_NAME}_projection_f1.agr",
+    series=[dict(x=delta_f1_ppm, y=projection_f1_isotropic, mode="line", color="blue",
+                 legend="F1 isotropic projection")],
+    xlabel="F1 — sheared isotropic dimension (ppm)", ylabel="Intensity (a.u.)", invert_x=True,
+)
 
 print(f"\nF1 (sheared, isotropic) axis: {delta_f1_ppm.min():.2f} to {delta_f1_ppm.max():.2f} ppm, "
       f"{n_t1_zf} points")

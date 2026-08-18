@@ -5,20 +5,14 @@ import nmrglue as ng
 from scipy.optimize import curve_fit
 
 from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0, parse_bruker_delay
+from library_nmr.agr_export import export_agr
 
 # ============================================================
 # PSEUDO-2D T1 INVERSION-RECOVERY EXTRACTION — nmr_library
 # Usage: edit the CONFIGURATION block below, then run.
-#
-# Purpose: read a pseudo-2D inversion-recovery experiment (180-tau-90-acquire,
-# varying recovery time tau from a vdlist), extract signed peak intensity per
-# row, and fit the T1 recovery curve.
-#
-# IMPORTANT DIFFERENCE vs the T2 (spin-echo) script: intensity here changes
-# SIGN across the series (negative right after inversion, positive once fully
-# relaxed). This affects peak localization, extraction, and the fit model —
-# do not reuse T2-script logic blindly, several steps below are intentionally
-# different.
+# NOTE: intensity changes SIGN across the series (negative near tau=0,
+# positive once recovered) — affects peak localization/extraction/fit
+# model, so don't reuse T2-script logic blindly here.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
@@ -26,18 +20,15 @@ PATH = r"D:\Postdoc\Datas\LLZO-400-aug26\210"  # Bruker folder containing the ps
 LB = 50  # line broadening in Hz
 PH0_MANUAL = 0.0  # PHC0 in degrees, used if AUTO_PH0=False and READ_PHASE_FROM_PROCS=False
 PH1 = 0.0  # PHC1 in degrees
-AUTO_PH0 = True  # automatic PH0 search, performed on the FULLY RECOVERED row (longest tau) —
-                  # that row has an ordinary (non-inverted) absorptive lineshape, the most
-                  # reliable reference for phasing.
+AUTO_PH0 = True  # auto PH0 search on the fully recovered (longest tau) row — the only one
+                  # with an ordinary, non-inverted lineshape, so the most reliable phase reference
 READ_PHASE_FROM_PROCS = False
 PPM_MIN = -10  # search window to locate the peak
 PPM_MAX = 10
-EXTRACTION_HALFWIDTH_PPM = 0.2  # intensity extracted as the mean over
-    # [peak_position - halfwidth, peak_position + halfwidth]. Set to 0 for the single nearest point.
+EXTRACTION_HALFWIDTH_PPM = 0.2  # intensity = mean over +/- halfwidth ppm (0 = single nearest point)
 NOISE_REGION_PPM = (-40, -30)  # signal-free region, for S/N diagnostics per row
-FIT_INVERSION_FACTOR = True  # True: fit the inversion factor A freely (recommended — real
-    # inversion pulses are rarely perfect, A=2 only holds for an ideal 180°). False: fix A=2.0
-    # (ideal inversion) and only fit M0, T1.
+FIT_INVERSION_FACTOR = True  # True: fit inversion factor A freely (recommended — real 180° pulses
+    # are rarely perfect, A=2 only holds ideally). False: fix A=2.0 and only fit M0, T1.
 OUTPUT_NAME = "T1_inversion_recovery"
 # ================================================
 
@@ -79,9 +70,8 @@ if len(tau_values) != data.shape[0]:
         f"check TD1 in posacqus matches the vdlist length, and that the experiment completed."
     )
 
-# --- Determine phase, using the FULLY RECOVERED (longest tau) row as reference ---
-# (An inverted/near-null row has an ambiguous or sign-flipped lineshape — not a
-# reliable reference for automatic phasing.)
+# --- Determine phase, using the fully recovered (longest tau) row as reference ---
+# (an inverted/near-null row has an ambiguous or sign-flipped lineshape)
 idx_longest = int(np.argmax(tau_values))
 if READ_PHASE_FROM_PROCS:
     try:
@@ -112,12 +102,10 @@ spectra = np.array([
     process_row(data[i], dt, LB, ph0_rad, ph1_rad, grpdly_shift)
     for i in range(data.shape[0])
 ])
-spectra_real = spectra.real  # MUST be the real (signed) part — magnitude would destroy
-                              # the sign information essential to inversion recovery.
+spectra_real = spectra.real  # MUST be the real (signed) part — magnitude would destroy the sign info
 
-# --- Locate the peak: use whichever row has the largest ABSOLUTE signal in the
-#     window, since the largest-magnitude row could be the most inverted (short
-#     tau) or the most recovered (long tau) depending on the experiment. ---
+# --- Locate the peak: use whichever row has the largest ABSOLUTE signal in the window
+#     (could be the most inverted short-tau row or the most recovered long-tau row) ---
 window_mask = (delta >= PPM_MIN) & (delta <= PPM_MAX)
 abs_max_per_row = np.array([np.max(np.abs(row[window_mask])) for row in spectra_real])
 idx_peak_row = int(np.argmax(abs_max_per_row))
@@ -144,9 +132,7 @@ for i in range(data.shape[0]):
     print(f"Row {i+1}: tau = {tau_values[i]*1000:.3f} ms, intensity = {intensities[i]:.3e}, "
           f"noise std = {noise_std_per_row[i]:.3e}, S/N = {snr_per_row[i]:.1f}")
 
-# --- Estimate T1 from the null point (zero crossing) as an initial guess, and as
-#     an independent sanity check even before the full fit. For an ideal
-#     inversion recovery, tau_null = T1 * ln(2). ---
+# --- Estimate T1 from the null point (zero crossing): ideal inversion recovery gives tau_null = T1*ln(2) ---
 sign_changes = np.where(np.diff(np.sign(intensities)) != 0)[0]
 if len(sign_changes) > 0:
     i0 = sign_changes[0]
@@ -218,6 +204,17 @@ ax.spines["top"].set_visible(False)
 ax.spines["right"].set_visible(False)
 plt.savefig(f"{OUTPUT_NAME}.pdf")
 plt.show()
+
+agr_series = [dict(x=tau_values * 1000, y=intensities, mode="symbol", color="blue", legend="data")]
+if FIT_INVERSION_FACTOR:
+    agr_series.append(dict(x=tau_fit * 1000, y=t1_recovery(tau_fit, M0, T1, A), mode="line",
+                            color="red", legend=f"fit T1={T1*1000:.3f} ms, A={A:.2f}"))
+else:
+    agr_series.append(dict(x=tau_fit * 1000, y=t1_recovery(tau_fit, M0, T1, 2.0), mode="line",
+                            color="red", legend=f"fit T1={T1*1000:.3f} ms"))
+export_agr(f"{OUTPUT_NAME}.agr", agr_series,
+           xlabel="Recovery time tau (ms)", ylabel="Intensity (a.u.)",
+           title="T1 relaxation — inversion recovery", xlog=True)
 
 # --- CSV export ---
 df = pd.DataFrame({

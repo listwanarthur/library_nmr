@@ -6,6 +6,7 @@ from scipy.optimize import curve_fit, nnls
 
 from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0
 from library_nmr.fitting import pseudo_voigt, sum_pseudo_voigt, fit_group
+from library_nmr.agr_export import export_agr
 
 # ============================================================
 # T1 PER-COMPONENT FIT — library_nmr (onepulse D1 series)
@@ -13,52 +14,22 @@ from library_nmr.fitting import pseudo_voigt, sum_pseudo_voigt, fit_group
 #
 # Same strategy as relaxation_T2_components.py: fit ONE reference spectrum
 # freely (pipeline_1d.py's two-component pseudo-Voigt), FREEZE
-# position/width/eta, then solve for the two amplitudes at every D1 with
-# NNLS (linear in amplitude for fixed shape), and fit each component's own
-# amplitude vs D1 recovery curve independently.
+# position/width/eta, solve for the two amplitudes at every D1 with NNLS
+# (linear in amplitude for fixed shape), then fit each component's own
+# amplitude vs D1 recovery curve independently. Reference = longest D1
+# (best S/N, fully relaxed) — no dead-time concern here (onepulse), unlike
+# relaxation_T2_components.py.
 #
-# Reference spectrum: unlike relaxation_T2_components.py, there is no
-# dead-time concern here — a onepulse experiment has only the receiver's
-# hardware dead time (a few us), not a rotor-period floor, so the LONGEST
-# D1 in this same series (best S/N, fully relaxed) is a perfectly good,
-# undistorted reference. No external reference spectrum needed.
+# CAUTION: a ~15-18% systematic residual trend at short D1 was traced to an
+# UNWEIGHTED fit (dominated by large-amplitude long-D1 points, starving the
+# short-D1 points where T1_fast lives) — fixed by sigma=y_in below. D1=0.1
+# (exp224) has no clean replacement and is left out.
 #
-# Same validated series as fit_T1_recovery.py / relaxation_T1_onepulse_series.py
-# (exp224-236, NS=32, onepulse.al), extended with extra short-D1 points added
-# 14-15/08 (exp266-269 in the original characterization) then re-acquired as
-# exp281-286 to better resolve T1_fast per component, previously poorly
-# constrained by the D1=0.1s floor (see the CAUTION note below and project
-# notes).
-#
-# CAUTION / HISTORY (15-17/08): a ~15-18% systematic residual trend at short
-# D1 was first (wrongly) attributed to DS=0 (insufficient dummy-scan
-# pre-equilibration). Reacquiring with DS=16, then with DS scaled to
-# ~5xT1_slow per point (exp281-286), changed NOTHING — the real cause was
-# that the fit below was UNWEIGHTED, so ordinary least squares is dominated
-# by the large-amplitude long-D1 points and effectively ignores the small-
-# amplitude short-D1 points (exactly where T1_fast lives). Adding
-# sigma=y_in fixed it immediately (see the curve_fit call below). D1=0.1
-# (exp224) has no clean replacement and is left out — it looked like an
-# outright outlier independent of this issue.
-#
-# NOTE: exact fitted values (T1_fast/T1_slow, error bars, fractions) for
-# narrow and broad are not reproduced here — this repository is public and
-# those numbers are part of an unpublished manuscript. Figure:
-# T1_components_fit_v2.png.
-#
-# narrow and broad come out with ESSENTIALLY THE SAME T1_slow (within
-# error bars) and a similarly small T1_fast fraction, even though their
-# T2 is very different (T2_fast narrow vs broad differ by roughly a
-# factor of ~1.5-2 — see relaxation_T2_components.py). This is expected, not a bug:
-# T1 is driven by fluctuations at the Larmor frequency, typically
-# dominated by a few relaxation "sinks" (paramagnetic impurities/defects)
-# rather than the local static coupling that sets T2. In a rigidly
-# dipolar-coupled lattice, spin diffusion can homogenize T1 across
-# structurally different sites on the (seconds-long) T1 timescale, even
-# though it's far too slow to do so on the (microsecond) T2 timescale —
-# hence T2 tells narrow and broad apart, T1 mostly doesn't. See project
-# notes for the full discussion and the T1(T)/T2(T) comparison this
-# motivates.
+# narrow and broad come out with essentially the SAME T1_slow despite very
+# different T2 — expected, not a bug: T1 is driven by fluctuations near the
+# Larmor frequency and dominated by a few relaxation sinks, while spin
+# diffusion homogenizes T1 across sites on the (seconds) T1 timescale even
+# though it's too slow to do so on the (microsecond) T2 timescale.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
@@ -234,9 +205,7 @@ if __name__ == "__main__":
         y = np.array(amp_series[i])
         usable = y > 0
         if usable.sum() < 5:
-            # biexp_recovery has 4 free parameters (M0, f, T1a, T1b) — need
-            # strictly more data points than parameters for curve_fit to be
-            # well-posed (matches the n_needed=5 guard in relaxation_T2_components.py).
+            # biexp_recovery has 4 free params — need >4 points for curve_fit to be well-posed.
             print(f"\n{name}: only {usable.sum()} usable (>0) points — cannot fit, skipping.")
             fit_params.append(None)
             continue
@@ -244,13 +213,8 @@ if __name__ == "__main__":
         p0 = [1.1 * y_in.max(), 0.05, 0.4, t_in[t_in > t_in.max() / 4].mean()]
         bounds = ([0.5 * y_in.max(), 0, 0.01, 5], [5 * y_in.max(), 0.3, 5, 200])
         try:
-            # CAUTION (fixed 18/08): sigma=y_in was missing here — same regression
-            # as relaxation_T1_onepulse_series.py. Without it the fit is dominated
-            # by the large-amplitude long-D1 points and effectively ignores the
-            # short-D1 points where T1_fast lives — this was the real cause of a
-            # ~15-18% systematic residual trend at short D1, previously fixed once
-            # and documented in fit_T1_components.py (Library_nmr working scripts).
-            # Do not remove sigma=y_in without re-checking residuals at short D1.
+            # CAUTION: sigma=y_in required — same short-D1 weighting issue as
+            # relaxation_T1_onepulse_series.py (~15-18% residual trend otherwise).
             popt, pcov = curve_fit(biexp_recovery, t_in, y_in, p0=p0, sigma=y_in, maxfev=50000, bounds=bounds)
             perr = np.sqrt(np.diag(pcov))
             fit_params.append({"popt": tuple(popt), "perr": tuple(perr)})
@@ -309,3 +273,17 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.savefig(f"{OUTPUT_NAME}.pdf")
     plt.show()
+
+    agr_series = []
+    for i, name in enumerate(COMPONENT_NAMES):
+        y = np.array(amp_series[i])
+        usable = y > 0
+        agr_series.append(dict(x=D1[usable], y=y[usable], mode="symbol",
+                                color=COMPONENT_COLORS[i], legend=f"{name} — data"))
+        if fit_params[i] is not None:
+            popt = fit_params[i]["popt"]
+            agr_series.append(dict(x=t_fit, y=biexp_recovery(t_fit, *popt), mode="line",
+                                    color=COMPONENT_COLORS[i], legend=f"{name} — fit"))
+    export_agr(f"{OUTPUT_NAME}.agr", agr_series,
+               xlabel="Recovery delay D1 (s)", ylabel="Component amplitude (a.u.)",
+               xlog=True, title="7Li T1 per component (fixed shape, NNLS amplitudes)")

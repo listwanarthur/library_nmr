@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import nmrglue as ng
 
 from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0
+from library_nmr.agr_export import export_agr
 
 # ============================================================
 # MULTI-SPECTRUM COMPARISON — library_nmr
@@ -30,21 +31,15 @@ SPECTRA = [
         "color": "red",
         "LB": 10,
         "PH0_manual": 12.400,
-        "PH1": -49.524,  # TODO: verify against real acquisition params — this matches
-                          # the "215" echo entry's PH1 exactly, which is suspicious
-                          # since 215 and 209 are different pulse sequences (echo vs
-                          # one-pulse) and would not generally share the same PHC1.
-                          # Not changed automatically: no way to derive the true
-                          # value without re-processing "209" in TopSpin directly.
+        "PH1": -49.524,  # TODO: verify — matches 215's PH1 exactly despite different
+                          # pulse sequences; needs re-processing "209" in TopSpin to confirm.
         "auto_ph0": True,
         "reference_shift_ppm": 2.06,
     },
     # Add as many entries as needed, same structure.
 ]
 
-ZF_FACTOR = 1  # zero-filling multiplier: total FFT length = N*(1+ZF_FACTOR) — so
-                 # 0=none, 1=double, 3=quadruple (NOT 1=none/2=double/4=quadruple;
-                 # fixed 18/08, same convention as pipeline_1d.py) — applied to ALL spectra
+ZF_FACTOR = 1  # zero-filling multiplier: total FFT length = N*(1+ZF_FACTOR); applied to ALL spectra
 
 NORMALIZE = "max"  # None, "max", or "area"
     # None  : raw intensities, as acquired (only meaningful if scan counts/receiver
@@ -121,6 +116,7 @@ def normalize_spectrum(delta, signal, method, zoom=None):
 # === PROCESSING ===
 fig, ax = plt.subplots(figsize=(10, 6))
 
+agr_series = []
 for i, spec_cfg in enumerate(SPECTRA):
     print(f"Processing: {spec_cfg['label']}")
     delta, signal = process_1d_spectrum(
@@ -133,6 +129,8 @@ for i, spec_cfg in enumerate(SPECTRA):
 
     ax.plot(delta, signal, color=spec_cfg.get("color", None), linewidth=1,
             label=spec_cfg["label"])
+    agr_series.append(dict(x=delta, y=signal, mode="line",
+                            color=spec_cfg.get("color", "black"), legend=spec_cfg["label"]))
 
 ax.invert_xaxis()
 ax.spines["top"].set_visible(False)
@@ -151,3 +149,7 @@ if ZOOM is not None:
 plt.tight_layout()
 plt.savefig(f"{OUTPUT_NAME}.pdf")
 plt.show()
+
+export_agr(f"{OUTPUT_NAME}.agr", agr_series,
+           xlabel="Chemical shift (ppm)", ylabel=ylabel,
+           invert_x=True, xlim=ZOOM)

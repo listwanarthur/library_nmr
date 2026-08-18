@@ -5,49 +5,25 @@ import nmrglue as ng
 from scipy.optimize import curve_fit
 
 from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0
+from library_nmr.agr_export import export_agr
 
 # ============================================================
 # T1 RECOVERY FIT — library_nmr (onepulse D1 series)
 # Usage: edit the CONFIGURATION block below, then run
 #
-# Why one spectrum per D1 instead of a pseudo-2D saturation-recovery:
-# a shared-reference two-component decomposition across many rows in
-# one long acquisition turned out unstable and drift-prone in this
-# project. A series of short, independent, individually-phased
-# spectra proved far more robust, using a simple total peak
-# intensity (not a fragile two-component decomposition) per D1.
+# One independent, individually-phased spectrum per D1 (not a pseudo-2D
+# saturation-recovery) — a simple total peak intensity, more robust than a
+# shared-reference two-component decomposition.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
-# NOTE (filled in 18/08 from the working Library_nmr copy, fit_T1_recovery.py):
-# this is the CURRENT VALIDATED series (exp281-286 for short D1, exp227-236 for
-# the rest, NS=32) — identified by scanning acqus D1/PULPROG/NS across the
-# whole dataset folder. The previous 0.3->251 / 0.5->252 entries here were from
-# an OLDER, ABANDONED short series (exp250-252, D1=0.1/0.3/0.5 only, never
-# completed past D1=0.5) — NOT the same acquisitions as 284/285 below, and not
-# usable on their own for a full biexponential. Do not mix them back in.
+# Current validated series (exp281-286 for short D1, exp227-236 for the
+# rest, NS=32). D1=0.1 (exp224) has no clean replacement and is left out.
 #
-# CAUTION / HISTORY (15-17/08): a systematic ~15-18% residual trend at short
-# D1 was first observed and (wrongly) attributed to DS=0 (no dummy scans,
-# insufficient pre-equilibration for D1 short compared to T1_slow).
-# exp266-269 were reacquired with DS=16, then DS scaled per-point to target
-# ~5xT1_slow of pre-equilibration time (exp281-286, DS=3000/1000/750/500/
-# 300/215 for D1=0.05/0.15/0.2/0.3/0.5/0.7) — the residual pattern was
-# UNCHANGED either time. The real cause: the fit was UNWEIGHTED (no `sigma=`
-# in curve_fit), so ordinary least squares minimizes ABSOLUTE residuals and
-# is dominated by the large-intensity long-D1 points; the much smaller
-# short-D1 points (exactly where T1_fast lives) were effectively free to be
-# fit poorly without penalty. Adding `sigma=I` (see below) fixed the residual
-# pattern immediately, with no further acquisition changes needed. D1=0.1
-# (exp224) has no clean replacement and is left out — it looked like an
-# outright outlier independent of the weighting issue.
-#
-# NOTE: the exact fitted T1_fast/T1_slow values (and error bars) obtained
-# from this DATASETS are not reproduced here — this repository is public
-# and those numbers are part of an unpublished manuscript. The fix itself
-# is verified quantitatively in tests/test_relaxation_T1_sigma_weighting.py
-# (weighted fit recovers a known synthetic T1_fast within 15%, unweighted
-# does not) rather than by quoting the real result.
+# CAUTION: a ~15-18% systematic residual trend at short D1 was traced to an
+# UNWEIGHTED fit (ordinary least squares dominated by large long-D1 points,
+# starving the short-D1 points where T1_fast lives) — fixed by sigma=I
+# below. Verified in tests/test_relaxation_T1_sigma_weighting.py.
 DATASETS = {
     # D1 (s) : path to the Bruker experiment folder
     0.05: r"D:\Postdoc\Datas\LLZO-400-aug26\281",
@@ -73,9 +49,7 @@ PH1 = -49.524  # PHC1 in degrees (first-order phase correction)
 AUTO_PH0 = True  # True: automatic PH0 search by maximizing the real part
 READ_PHASE_FROM_PROCS = False  # set True to read ph0/ph1 from TopSpin (procs) — takes priority over AUTO_PH0
 REFERENCE_SHIFT_PPM = 2  # additive shift applied to the ppm axis (referencing) — same convention as pipeline_1d.py
-ZF_FACTOR = 1  # zero-filling multiplier: total FFT length = N*(1+ZF_FACTOR) — so
-                 # 0=none, 1=double, 3=quadruple (NOT 1=none/2=double/4=quadruple;
-                 # fixed 18/08, same convention as pipeline_1d.py)
+ZF_FACTOR = 1  # zero-filling multiplier: total FFT length = N*(1+ZF_FACTOR); 0=none, 1=double, 3=quadruple
 PEAK_PPM_WINDOW = (30, -30)  # window to search for the peak max (same span as your ZOOM)
 OUTPUT_NAME = "T1_recovery_fit"
 # ================================================
@@ -144,10 +118,8 @@ def biexp_recovery(t, M0, f, T1a, T1b):
 
 if __name__ == "__main__":
     # === PROCESSING ===
-    # Guarded under __main__ (fixed 18/08) so this module can be imported
-    # (e.g. by tests, for biexp_recovery / get_peak_intensity / process_1d_spectrum)
-    # without immediately trying to read the hardcoded DATASETS paths — same
-    # convention already applied to relaxation_T2_components.py.
+    # Guarded under __main__ so this module can be imported (e.g. by tests)
+    # without trying to read the hardcoded DATASETS paths.
     D1_list, I_list, ph0_list = [], [], []
 
     for d1, path in sorted(DATASETS.items()):
@@ -178,14 +150,9 @@ if __name__ == "__main__":
 
     p0 = [1.1 * I.max(), 0.2, 0.5, D1[D1 > D1.max() / 4].mean()]
     bounds = ([0.5 * I.max(), 0, 0.001, 1], [5 * I.max(), 1, 20, 500])
-    # CAUTION (fixed 18/08): sigma=I was missing here. The T1 recovery curve spans
-    # a wide dynamic range (weak signal at short D1, near-full recovery at long
-    # D1) — an unweighted fit is dominated by the large-amplitude long-D1 points
-    # and effectively ignores the short-D1 points where T1_fast lives. This is
-    # the exact bug class already found and fixed once in this project (see
-    # fit_T1_recovery.py in the working Library_nmr scripts) that had regressed
-    # here in the Portfolio copy. Do not remove sigma=I without re-checking the
-    # residuals at short D1.
+    # CAUTION: sigma=I is required — an unweighted fit is dominated by the
+    # large-amplitude long-D1 points and starves short-D1 points where T1_fast
+    # lives (~15-18% residual trend at short D1 otherwise). Do not remove.
     popt, pcov = curve_fit(biexp_recovery, D1, I, p0=p0, sigma=I, maxfev=50000, bounds=bounds)
     perr = np.sqrt(np.diag(pcov))
     M0, f, T1fast, T1slow = popt
@@ -232,3 +199,11 @@ if __name__ == "__main__":
     ax.spines["right"].set_visible(False)
     plt.savefig(f"{OUTPUT_NAME}.pdf")
     plt.show()
+
+    agr_series = [
+        dict(x=D1, y=I, mode="symbol", color="blue", legend="data"),
+        dict(x=t_fit, y=y_fit, mode="line", color="red", legend="biexponential fit"),
+    ]
+    export_agr(f"{OUTPUT_NAME}.agr", agr_series,
+               xlabel="Recovery delay D1 (s)", ylabel="Intensity (a.u.)",
+               xlog=True, title="7Li T1 recovery (onepulse series)")

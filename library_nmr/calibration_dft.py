@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from library_nmr.agr_export import export_agr
+
 # ============================================================
 # CALIBRATION DFT/GIPAW — bibliotheque_nmr
 # Utilisation : modifier le bloc CONFIGURATION puis lancer
@@ -27,11 +29,7 @@ NOM_SORTIE = "calibration_dft"
 
 def lire_magres(fichier, noyau):
     """Lit un fichier .magres et extrait les sigma_iso pour le noyau choisi.
-
-    La comparaison sur le nom du noyau est insensible à la casse (certains
-    fichiers .magres utilisent "Li", d'autres "li" selon la version du
-    logiciel qui les a générés).
-    """
+    Comparaison du nom de noyau insensible à la casse ("Li" vs "li" selon les versions)."""
     resultats = []
     with open(fichier, "r") as f:
         for numero_ligne, ligne in enumerate(f, start=1):
@@ -71,17 +69,10 @@ def appliquer_calibration(sigma_iso, a, b):
 
 def validation_croisee_loo(sigma_calc_ref, delta_exp_ref):
     """Validation croisée "leave-one-out" (LOOCV) de la calibration.
-
-    Le R² calculé sur les points ayant servi à l'ajustement (R² "naïf") est
-    toujours optimiste : avec peu de points de référence et seulement 2
-    paramètres libres (pente, ordonnée), il reste élevé même si la
-    calibration extrapole mal en dehors des points d'ancrage. Le LOOCV
-    retire un point à la fois, refait la régression sur les points
-    restants, prédit le point exclu, et compare — c'est une mesure bien
-    plus honnête de la fiabilité réelle de la calibration.
-
-    Retourne (delta_predit_loo, rmse_loo, r2_loo).
-    """
+    Le R² naïf (sur les points d'ajustement) est toujours optimiste avec peu de
+    points ; le LOOCV retire un point, refait la régression, prédit le point
+    exclu, et compare — mesure plus honnête de la fiabilité réelle.
+    Retourne (delta_predit_loo, rmse_loo, r2_loo)."""
     sigma_calc_ref = np.asarray(sigma_calc_ref, dtype=float)
     delta_exp_ref = np.asarray(delta_exp_ref, dtype=float)
     n = len(sigma_calc_ref)
@@ -157,6 +148,16 @@ ax.legend()
 plt.savefig(f"{NOM_SORTIE}_calibration.pdf")
 plt.show()
 
+export_agr(
+    f"{NOM_SORTIE}_calibration.agr",
+    series=[
+        dict(x=sigma_ref, y=delta_ref, mode="symbol", color="blue", legend="références"),
+        dict(x=sigma_ligne, y=a * sigma_ligne + b, mode="line", color="red",
+             legend=f"calibration R²={r2:.4f}"),
+    ],
+    xlabel=f"sigma_calc {NOYAU} (ppm)", ylabel="delta_exp (ppm)",
+)
+
 # Figure 2 — graphe de parité (delta_exp vs delta_prédit), points d'ajustement ET LOOCV
 fig, ax = plt.subplots(figsize=(6, 6))
 ax.scatter(delta_predit_ref, delta_ref, color="blue", label="ajustement (optimiste)")
@@ -172,6 +173,16 @@ ax.spines["right"].set_visible(False)
 ax.legend()
 plt.savefig(f"{NOM_SORTIE}_parite.pdf")
 plt.show()
+
+export_agr(
+    f"{NOM_SORTIE}_parite.agr",
+    series=[
+        dict(x=delta_predit_ref, y=delta_ref, mode="symbol", color="blue", legend="ajustement (optimiste)"),
+        dict(x=delta_predit_loo, y=delta_ref, mode="symbol", color="orange", legend="validation croisée (LOO)"),
+        dict(x=lim, y=lim, mode="line", color="black", legend="y=x (idéal)"),
+    ],
+    xlabel="delta prédit (ppm)", ylabel="delta exp (ppm)",
+)
 
 # Lecture fichier magres et application de la calibration
 df = lire_magres(FICHIER_MAGRES, NOYAU)

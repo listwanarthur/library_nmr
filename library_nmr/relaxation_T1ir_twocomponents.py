@@ -6,24 +6,21 @@ from scipy.optimize import curve_fit
 
 from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0, parse_bruker_delay
 from library_nmr.fitting import pseudo_voigt, sum_pseudo_voigt
+from library_nmr.agr_export import export_agr
 
 # ============================================================
 # PSEUDO-2D T1 INVERSION-RECOVERY — TWO-COMPONENT VERSION — nmr_library
 # Usage: edit the CONFIGURATION block below, then run.
 #
-# Purpose: same experiment as pseudo2d_T1_inversion_recovery.py, but tracks
-# TWO overlapping lineshape components (e.g. a narrow + a broad Li site)
-# separately across the relaxation series, instead of a single peak-height
-# extraction. Each component gets its own T1.
+# Tracks TWO overlapping lineshape components (e.g. narrow + broad Li site)
+# separately across the relaxation series, each with its own T1.
 #
-# METHOD: the two pseudo-Voigt SHAPES (position, width, eta) are determined
-# ONCE via a full nonlinear fit on the fully-relaxed (longest tau) row — the
-# best-conditioned row, guaranteed positive. For every other row (which can
-# be negative, near zero, or a mix), only the two SIGNED AMPLITUDES are
-# solved via ordinary linear least squares against those fixed shapes. This
-# avoids re-fitting 8 nonlinear parameters on noisy/sign-changing data, and
-# naturally allows negative amplitudes (needed here) without special bounds
-# tricks.
+# METHOD: the two pseudo-Voigt SHAPES (position, width, eta) are fit ONCE on
+# the fully-relaxed (longest tau, guaranteed positive) row. Every other row
+# (which can be negative/near-zero/mixed) only has its two SIGNED AMPLITUDES
+# solved via linear least squares against those fixed shapes — avoids
+# re-fitting 8 nonlinear params on noisy/sign-changing data and naturally
+# allows negative amplitudes without special bounds tricks.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
@@ -45,9 +42,7 @@ WIDTH_BOUNDS = [(0, 8), (8, 100)]     # prevents role-swapping between component
 POSITION_BOUNDS = [(-4, 5), (-4, 5)]  # keeps both components on the real peak
 
 NOISE_REGION_PPM = (-40, -30)
-FIT_INVERSION_FACTOR = True  # fit A (inversion factor) independently for each component's T1 curve.
-    # Physically, both components experience the SAME inversion pulse, so their fitted A values
-    # should come out similar — this script reports both so you can check that consistency.
+FIT_INVERSION_FACTOR = True  # fit A per component; both should agree (same physical inversion pulse) — used as a consistency check
 OUTPUT_NAME = "T1_two_components"
 # ================================================
 
@@ -59,12 +54,8 @@ def t1_recovery(tau, M0, T1, A):
 
 
 # --- Two-component lineshape fitting ---
-# NOTE: this fit_group is intentionally a SIMPLER, LOCAL variant, not the one
-# in library_nmr.fitting — it returns a flat [A,nu0,FWHM,eta]*n_peaks array
-# (no uncertainties/integral/etc.), since it is only used ONCE here to fix
-# the lineshape parameters on the reference row before the per-row linear
-# amplitude extraction (see Step 2 below). pseudo_voigt/sum_pseudo_voigt
-# themselves ARE shared (imported from library_nmr.fitting above).
+# NOTE: simpler LOCAL variant of fit_group (not library_nmr.fitting's) — returns a
+# flat [A,nu0,FWHM,eta]*n_peaks array, used ONCE to fix lineshapes on the reference row.
 
 def fit_group(delta, spectrum, ppm_min, ppm_max, p0_list, eta_fixed_list=None,
               width_bounds_list=None, position_bounds_list=None):
@@ -269,11 +260,7 @@ for c in range(n_components):
                   f"for this component (check tau range / sign change above).")
         results_per_component.append({"M0": M0, "T1": T1, "err_T1": err_T1, "A": A, "err_A": err_A})
     except (RuntimeError, ValueError) as e:
-        # ValueError included defensively (an infeasible initial guess raises
-        # ValueError, not RuntimeError) — same hardening applied to
-        # relaxation_T1sr_twocomponents.py, kept consistent here even though
-        # M0's bounds are (-inf, inf) so this specific failure mode is less
-        # likely for this script. (fixed 18/08)
+        # ValueError caught too: an infeasible initial guess raises ValueError, not RuntimeError.
         print(f"Component {c+1}: T1 fit failed to converge ({type(e).__name__}: {e}).")
         results_per_component.append({"M0": np.nan, "T1": np.nan, "err_T1": np.nan, "A": np.nan, "err_A": np.nan})
 
@@ -309,6 +296,21 @@ ax.spines["right"].set_visible(False)
 plt.tight_layout()
 plt.savefig(f"{OUTPUT_NAME}.pdf")
 plt.show()
+
+# --- Grace (.agr) export ---
+agr_series = []
+for c in range(n_components):
+    r = results_per_component[c]
+    agr_series.append(dict(x=tau_values * 1000, y=integrals[:, c], mode="symbol",
+                            color=colors[c % len(colors)], legend=f"component {c+1} data"))
+    if not np.isnan(r["T1"]):
+        agr_series.append(dict(
+            x=tau_fit * 1000, y=t1_recovery(tau_fit, r["M0"], r["T1"], r["A"]),
+            mode="line", color=colors[c % len(colors)],
+            legend=f"component {c+1} fit: T1={r['T1']*1000:.2f} ms, A={r['A']:.2f}",
+        ))
+export_agr(f"{OUTPUT_NAME}.agr", agr_series, xlabel="Recovery time tau (ms)",
+           ylabel="Integrated area (a.u.)", title="T1 relaxation — two components", xlog=True)
 
 # --- CSV export ---
 df = pd.DataFrame({"tau_ms": tau_values * 1000})

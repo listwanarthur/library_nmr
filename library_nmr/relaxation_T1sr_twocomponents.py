@@ -6,22 +6,19 @@ from scipy.optimize import curve_fit
 
 from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0, parse_bruker_delay
 from library_nmr.fitting import pseudo_voigt, sum_pseudo_voigt
+from library_nmr.agr_export import export_agr
 
 # ============================================================
 # PSEUDO-2D T1 SATURATION-RECOVERY — TWO-COMPONENT VERSION — nmr_library
 # Usage: edit the CONFIGURATION block below, then run.
 #
-# Purpose: same experiment as pseudo2d_T1_saturation_recovery.py, but tracks
-# TWO overlapping lineshape components (e.g. a narrow + a broad Li site)
-# separately across the relaxation series, instead of a single peak-height
-# extraction. Each component gets its own T1.
+# Tracks TWO overlapping lineshape components (e.g. narrow + broad Li site)
+# separately across the relaxation series, each with its own T1.
 #
-# METHOD: the two pseudo-Voigt SHAPES (position, width, eta) are determined
-# ONCE via a full nonlinear fit on the fully-relaxed (longest tau) row — the
-# best-conditioned row, best S/N. For every other row, only the two
-# AMPLITUDES are solved via ordinary linear least squares against those
-# fixed shapes. This avoids re-fitting 8 nonlinear parameters on every
-# noisy row.
+# METHOD: the two pseudo-Voigt SHAPES (position, width, eta) are fit ONCE on
+# the fully-relaxed (longest tau, best S/N) row. Every other row only has its
+# two AMPLITUDES solved via linear least squares against those fixed shapes —
+# avoids re-fitting 8 nonlinear parameters on every noisy row.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
@@ -43,9 +40,7 @@ WIDTH_BOUNDS = [(0, 8), (8, 100)]     # prevents role-swapping between component
 POSITION_BOUNDS = [(-4, 5), (-4, 5)]  # keeps both components on the real peak
 
 NOISE_REGION_PPM = (-40, -30)
-FIT_SATURATION_FACTOR = True  # fit B (saturation factor) independently for each component's T1 curve.
-    # Physically, both components experience the SAME saturation comb, so their fitted B values
-    # should come out similar — this script reports both so you can check that consistency.
+FIT_SATURATION_FACTOR = True  # fit B per component; both should agree (same physical saturation comb) — used as a consistency check
 OUTPUT_NAME = "T1_sat_recovery_two_components"
 # ================================================
 
@@ -57,12 +52,8 @@ def t1_sat_recovery(tau, M0, T1, B):
 
 
 # --- Two-component lineshape fitting ---
-# NOTE: this fit_group is intentionally a SIMPLER, LOCAL variant, not the one
-# in library_nmr.fitting — it returns a flat [A,nu0,FWHM,eta]*n_peaks array
-# (no uncertainties/integral/etc.), since it is only used ONCE here to fix
-# the lineshape parameters on the reference row before the per-row linear
-# amplitude extraction. pseudo_voigt/sum_pseudo_voigt themselves ARE shared
-# (imported from library_nmr.fitting above).
+# NOTE: simpler LOCAL variant of fit_group (not library_nmr.fitting's) — returns a
+# flat [A,nu0,FWHM,eta]*n_peaks array, used ONCE to fix lineshapes on the reference row.
 
 def fit_group(delta, spectrum, ppm_min, ppm_max, p0_list, eta_fixed_list=None,
               width_bounds_list=None, position_bounds_list=None):
@@ -232,13 +223,9 @@ for c in range(n_components):
     y = integrals[:, c]
     M0_guess = y[idx_longest]
     if M0_guess <= 0:
-        # lstsq over overlapping/near-collinear pseudo-Voigt basis shapes can
-        # return a negative amplitude for a component even when the true
-        # signal is positive. curve_fit's bounds below require M0 >= 0, so a
-        # negative initial guess makes the starting point infeasible and
-        # raises ValueError (not RuntimeError) — crashing the whole script
-        # instead of just failing this component. Clamp to a small positive
-        # fallback instead. (fixed 18/08)
+        # lstsq over near-collinear pseudo-Voigt basis shapes can return a negative
+        # amplitude even for a truly positive signal; curve_fit requires M0 >= 0 below,
+        # so clamp to a small positive fallback instead of letting it raise ValueError.
         M0_guess = max(np.abs(y).max(), 1e-6)
         print(f"\nComponent {c+1}: NOTE — raw M0 guess from lstsq was <= 0 (near-collinear basis "
               f"shapes); using |y|.max() as a fallback initial guess instead.")
@@ -285,10 +272,7 @@ for c in range(n_components):
                   f"for this component (check tau range / (1-1/e) crossing above).")
         results_per_component.append({"M0": M0, "T1": T1, "err_T1": err_T1, "B": B, "err_B": err_B})
     except (RuntimeError, ValueError) as e:
-        # ValueError is included because an infeasible initial guess (e.g. any
-        # x0 outside `bounds`) raises ValueError rather than RuntimeError —
-        # without catching it here, one bad component crashes the entire
-        # script instead of just being reported as failed. (fixed 18/08)
+        # ValueError caught too: an infeasible initial guess raises ValueError, not RuntimeError.
         print(f"Component {c+1}: T1 fit failed to converge ({type(e).__name__}: {e}).")
         results_per_component.append({"M0": np.nan, "T1": np.nan, "err_T1": np.nan, "B": np.nan, "err_B": np.nan})
 
@@ -324,6 +308,22 @@ ax.spines["right"].set_visible(False)
 plt.tight_layout()
 plt.savefig(f"{OUTPUT_NAME}.pdf")
 plt.show()
+
+# --- Grace (.agr) export ---
+agr_series = []
+for c in range(n_components):
+    r = results_per_component[c]
+    agr_series.append(dict(x=tau_values * 1000, y=integrals[:, c], mode="symbol",
+                            color=colors[c % len(colors)], legend=f"component {c+1} data"))
+    if not np.isnan(r["T1"]):
+        agr_series.append(dict(
+            x=tau_fit * 1000, y=t1_sat_recovery(tau_fit, r["M0"], r["T1"], r["B"]),
+            mode="line", color=colors[c % len(colors)],
+            legend=f"component {c+1} fit: T1={r['T1']*1000:.2f} ms, B={r['B']:.2f}",
+        ))
+export_agr(f"{OUTPUT_NAME}.agr", agr_series, xlabel="Recovery time tau (ms)",
+           ylabel="Integrated area (a.u.)",
+           title="T1 relaxation — saturation recovery, two components", xlog=True)
 
 # --- CSV export ---
 df = pd.DataFrame({"tau_ms": tau_values * 1000})

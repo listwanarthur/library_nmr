@@ -5,25 +5,18 @@ import nmrglue as ng
 from scipy.optimize import curve_fit
 
 from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0, parse_bruker_delay
+from library_nmr.agr_export import export_agr
 
 # ============================================================
 # PSEUDO-2D T1 SATURATION-RECOVERY EXTRACTION — nmr_library
 # Usage: edit the CONFIGURATION block below, then run.
 #
-# Purpose: read a pseudo-2D saturation-recovery experiment (comb-TAU-90-
-# acquire, varying recovery time tau from a vdlist), extract peak intensity
-# per row, and fit the T1 recovery curve.
-#
-# WHY SATURATION RECOVERY INSTEAD OF INVERSION RECOVERY: for quadrupolar
-# nuclei (7Li included) with non-negligible quadrupolar coupling (satellites
-# visible in the static/MAS spectrum), a single pulse calibrated as "180
-# degrees" from a whole-powder nutation curve does not equally invert the
-# central transition and the satellite transitions — it can fail to invert
-# the central transition cleanly even when the nominal calibration looks
-# correct. A saturation comb only needs to destroy Mz "well enough", not
-# hit a precise flip angle, sidestepping that ambiguity. Unlike inversion
-# recovery, the signal here NEVER changes sign — it grows monotonically
-# from ~0 to M0.
+# WHY SATURATION RECOVERY INSTEAD OF INVERSION RECOVERY: for quadrupolar nuclei
+# (7Li incl.) with non-negligible quadrupolar coupling, a pulse calibrated as
+# "180°" from a whole-powder nutation curve does not equally invert the central
+# and satellite transitions. A saturation comb only needs to destroy Mz "well
+# enough", sidestepping that ambiguity. Unlike inversion recovery, signal here
+# NEVER changes sign — it grows monotonically from ~0 to M0.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
@@ -37,9 +30,8 @@ PPM_MIN = -10  # search window to locate the peak
 PPM_MAX = 10
 EXTRACTION_HALFWIDTH_PPM = 0.2
 NOISE_REGION_PPM = (-40, -30)
-FIT_SATURATION_FACTOR = True  # True: fit the saturation factor B freely (recommended — a real
-    # saturation comb rarely destroys Mz perfectly, especially for quadrupolar satellites).
-    # False: fix B=1.0 (ideal/complete saturation) and only fit M0, T1.
+FIT_SATURATION_FACTOR = True  # True: fit saturation factor B freely (recommended — a real comb
+    # rarely destroys Mz perfectly, esp. for quadrupolar satellites). False: fix B=1.0, fit M0, T1.
 OUTPUT_NAME = "T1_saturation_recovery"
 # ================================================
 
@@ -140,10 +132,8 @@ if len(idx_above) > 0 and idx_above[0] > 0:
     T1_guess = t_a + (target - y_a) * (t_b - t_a) / (y_b - y_a)
     print(f"\nT1 guess from (1-1/e) crossing: ~{T1_guess*1000:.3f} ms")
 elif len(idx_above) > 0 and idx_above[0] == 0:
-    # (1-1/e) of the plateau is already reached by the very first tau point —
-    # this is NOT "never reaches", it means T1 is at or below the shortest
-    # tau tested. Use the first point as an upper-bound guess rather than
-    # falling back to a meaningless median. (fixed 18/08)
+    # (1-1/e) already reached at the first tau point -> T1 is at/below the shortest
+    # tau tested; use it as an upper-bound guess rather than a meaningless median
     T1_guess = tau_values[0]
     print(f"\nT1 guess: (1-1/e) of plateau already reached at the shortest tau tested "
           f"(~{T1_guess*1000:.3f} ms) — true T1 may be shorter than this grid resolves. "
@@ -199,6 +189,17 @@ ax.spines["top"].set_visible(False)
 ax.spines["right"].set_visible(False)
 plt.savefig(f"{OUTPUT_NAME}.pdf")
 plt.show()
+
+agr_series = [dict(x=tau_values * 1000, y=intensities, mode="symbol", color="blue", legend="data")]
+if FIT_SATURATION_FACTOR:
+    agr_series.append(dict(x=tau_fit * 1000, y=t1_sat_recovery(tau_fit, M0, T1, B), mode="line",
+                            color="red", legend=f"fit T1={T1*1000:.3f} ms, B={B:.2f}"))
+else:
+    agr_series.append(dict(x=tau_fit * 1000, y=t1_sat_recovery(tau_fit, M0, T1, 1.0), mode="line",
+                            color="red", legend=f"fit T1={T1*1000:.3f} ms"))
+export_agr(f"{OUTPUT_NAME}.agr", agr_series,
+           xlabel="Recovery time tau (ms)", ylabel="Intensity (a.u.)",
+           title="T1 relaxation — saturation recovery", xlog=True)
 
 # --- CSV export ---
 df = pd.DataFrame({

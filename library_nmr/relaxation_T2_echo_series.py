@@ -5,37 +5,26 @@ import nmrglue as ng
 from scipy.optimize import curve_fit
 
 from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0
+from library_nmr.agr_export import export_agr
 
 # ============================================================
 # T2 SOLID-ECHO FIT — library_nmr (echosolide_v2, discrete L0 series)
 # Usage: edit the CONFIGURATION block below, then run
 #
-# Same principle as relaxation_T1_onepulse_series.py: independent, individually
-# phased onepulse-style spectra rather than a pseudo-2D echosolid
-# (which gave flat/degenerate fits) or a shared-reference two-component
-# decomposition (unstable run-to-run). Just the total peak intensity
-# per spectrum, this time as a function of the echo delay set by L0
-# (integer number of rotor periods), not D1.
+# Independent, individually-phased onepulse-style spectra (like
+# relaxation_T1_onepulse_series.py), total peak intensity vs echo delay L0
+# (tau_echo = L0 * tau_rotor), using the calibrated p2 (not p1*2) for the
+# refocusing pulse.
 #
-# echosolide_v2 uses the calibrated p2 (not p1*2) for the refocusing
-# pulse — see project notes. tau_echo = L0 * tau_rotor.
-#
-# Unlike T1 recovery, the T2 decay spans ~2-3 orders of magnitude in
-# intensity over the accessible delay range, and is not a single
-# exponential (fast + slow relaxing populations, consistent with the
-# fine/broad spectral components). An unweighted least-squares fit is
-# then dominated by the first few large-amplitude points and barely
-# constrains the slow tail — so this script fits with sigma=I
-# (relative weighting) by default. Do not remove this without checking
-# the residuals on the longest delays.
+# The T2 decay spans ~2-3 orders of magnitude and is not single-exponential
+# — an unweighted fit would be dominated by the first few large points and
+# barely constrain the slow tail, so this fits with sigma=I. Do not remove
+# without checking the residuals on the longest delays.
 #
 # Phase: PH0 is determined ONCE on the reference (best S/N) spectrum and
-# FROZEN for the whole series, instead of re-running AUTO_PH0 on every
-# spectrum independently. On a real overnight series this mattered: two
-# low-S/N points came back with PH0 far outside the tight cluster formed
-# by every other spectrum (auto-search locking onto noise instead of the
-# real signal), which silently corrupted their peak intensity. There is
-# no physical reason for PH0 to drift within one session anyway.
+# FROZEN for the whole series — on a real overnight series, re-running
+# AUTO_PH0 per spectrum let two low-S/N points lock onto noise instead of
+# the real signal, silently corrupting their intensity.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
@@ -54,23 +43,11 @@ DATASETS = {
     80:  r"D:\Postdoc\Datas\LLZO-400-aug26\262",
     90:  r"D:\Postdoc\Datas\LLZO-400-aug26\263",
     100: r"D:\Postdoc\Datas\LLZO-400-aug26\264",
-    # Extended tau points added 14-15/08 (exp270-275), same acquisitions used
-    # to extend relaxation_T2_components.py — added here too on 17/08 for
-    # consistency between the global and per-component T2 fits.
-    #
-    # NOTE: exact fitted T2_fast/T2_slow values (and error bars/fractions)
-    # on the full 17-point series are not reproduced here — this repository
-    # is public and those numbers are part of an unpublished manuscript.
-    # T2_fast stayed consistent with the original 11-point value. T2_slow
-    # shifted and the residuals at long delay are noisy — noticeably worse
-    # than the clean fit obtained on the SAME extended delays in
-    # relaxation_T2_components.py. Reason: at long tau the global
-    # (non-decomposed) signal is a mix of narrow's still-decaying tail and
-    # broad's collapsing tail — two different decay behaviors summed
-    # together, which a single global biexponential describes less well
-    # than fitting each component separately. Treat this global T2_slow as
-    # a rough cross-check only; relaxation_T2_components.py's per-component
-    # values are the reliable source. Figure: T2_echosolide_fit_v2.png.
+    # Extended tau points added 14-15/08 (exp270-275), also used to extend
+    # relaxation_T2_components.py. NOTE: at long tau this GLOBAL fit mixes
+    # narrow's and broad's differently-decaying tails, so treat T2_slow here
+    # as a rough cross-check only — relaxation_T2_components.py's
+    # per-component values are the reliable source.
     125: r"D:\Postdoc\Datas\LLZO-400-aug26\270",
     150: r"D:\Postdoc\Datas\LLZO-400-aug26\271",
     188: r"D:\Postdoc\Datas\LLZO-400-aug26\272",
@@ -93,16 +70,10 @@ PH1 = -49.524  # PHC1 in degrees (first-order phase correction)
 AUTO_PH0 = True  # True: automatic PH0 search by maximizing the real part
 READ_PHASE_FROM_PROCS = False  # set True to read ph0/ph1 from TopSpin (procs) — takes priority over AUTO_PH0
 REFERENCE_SHIFT_PPM = 2  # additive shift applied to the ppm axis (referencing) — same convention as pipeline_1d.py
-ZF_FACTOR = 1  # zero-filling multiplier: total FFT length = N*(1+ZF_FACTOR) — so
-                 # 0=none, 1=double, 3=quadruple (NOT 1=none/2=double/4=quadruple;
-                 # fixed 18/08, same convention as pipeline_1d.py)
-PEAK_PPM_WINDOW = (6, -4)  # window to search for the peak max. Kept TIGHT around the
-    # real peak (~0.9-1.4 ppm here) on purpose: a wide window (e.g. +/-30 ppm) lets
-    # argmax lock onto a noise spike elsewhere in the spectrum once the real S/N
-    # drops, at which point BOTH the reported intensity and the reported peak
-    # position become meaningless (position jumping around ppm, intensity
-    # occasionally increasing with delay, which is not physically possible for a
-    # decay). Re-check this range against your actual peak position before running.
+ZF_FACTOR = 1  # zero-filling multiplier: total FFT length = N*(1+ZF_FACTOR); 0=none, 1=double, 3=quadruple
+PEAK_PPM_WINDOW = (6, -4)  # kept TIGHT around the real peak on purpose — a wide window
+    # lets argmax lock onto a noise spike once S/N drops, corrupting both intensity
+    # and position. Re-check against your actual peak position before running.
 PHASE_REFERENCE_L0 = None  # L0 to determine PH0 from (frozen for the whole series). None = use the smallest L0 in DATASETS (best S/N).
 OUTPUT_NAME = "T2_echosolide_fit"
 # ================================================
@@ -150,19 +121,9 @@ def process_1d_spectrum(path, LB, ph0_manual, ph1, zf_factor,
 
 
 def get_peak_intensity(delta, signal, ppm_window):
-    """Integrated intensity (trapezoidal area) within ppm_window — deliberately
-    NOT a two-component decomposition, same rationale as relaxation_T1_onepulse_series.py.
-
-    Earlier version used argmax (single highest point in the window). That
-    works fine at good S/N (T1 series never got weak enough for it to matter)
-    but breaks down for the low-S/N tail of a T2 series: a single-point max is
-    very noise-sensitive and systematically biased UPWARDS once the real
-    signal amplitude approaches the noise level (confirmed on real data: peak
-    position wandering by >1 ppm and one point's "intensity" increasing with
-    delay, which a real decay cannot do). Integrating over the window instead
-    averages the noise down rather than picking its highest excursion — the
-    standard way to quantify a weak signal.
-    """
+    """Integrated intensity (trapezoidal area) within ppm_window, not argmax —
+    a single-point max is noise-sensitive and biased upward at low S/N (the
+    T2 series' weak tail); integrating averages the noise down instead."""
     lo, hi = sorted(ppm_window)
     mask = (delta >= lo) & (delta <= hi)
     window_ppm = delta[mask]
@@ -217,9 +178,7 @@ if __name__ == "__main__":
     I = np.array(I_list)
 
     if len(tau) < 5:
-        # biexp_decay has 4 free parameters (A1, T2fast, A2, T2slow) — need
-        # strictly more data points than parameters for curve_fit to be
-        # well-posed (matches the n_needed=5 guard in relaxation_T2_components.py).
+        # biexp_decay has 4 free params — need >4 points for curve_fit to be well-posed.
         print("\nNeed at least 5 usable points for a stable biexponential fit.")
         raise SystemExit
 
@@ -270,7 +229,7 @@ if __name__ == "__main__":
     t_fit = np.logspace(np.log10(tau.min() / 1.5), np.log10(tau.max() * 1.3), 400)
     y_fit = biexp_decay(t_fit, *popt)
 
-    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(8, 7), gridspec_kw={"height_ratios": [3, 1]}, sharex=True)
+    fig, ax = plt.subplots(figsize=(8, 5))
 
     ax.plot(t_fit, y_fit, color="red", lw=1.5, zorder=2, label="biexponential fit")
     ax.scatter(tau, I, color="blue", s=55, zorder=3, label="data")
@@ -278,6 +237,7 @@ if __name__ == "__main__":
         ax.scatter(nd_tau, nd_I, marker="x", color="gray", s=70, zorder=3, label="below detection (ND)")
     ax.set_xscale("log")
     ax.set_yscale("log")
+    ax.set_xlabel("Echo delay tau (us) = L0 x tau_rotor")
     ax.set_ylabel("Intensity (a.u.)")
     ax.set_title(r"$^7$Li T$_2$ solid-echo decay (discrete L0 series)")
 
@@ -292,14 +252,16 @@ if __name__ == "__main__":
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    ax2.axhline(0, color="k", lw=0.8)
-    ax2.scatter(tau, rel_resid, color="blue", s=40)
-    ax2.set_xscale("log")
-    ax2.set_xlabel("Echo delay tau (us) = L0 x tau_rotor")
-    ax2.set_ylabel("residual (%)")
-    ax2.spines["top"].set_visible(False)
-    ax2.spines["right"].set_visible(False)
-
     plt.tight_layout()
     plt.savefig(f"{OUTPUT_NAME}.pdf")
     plt.show()
+
+    agr_series = [
+        dict(x=tau, y=I, mode="symbol", color="blue", legend="data"),
+        dict(x=t_fit, y=y_fit, mode="line", color="red", legend="biexponential fit"),
+    ]
+    if nd_tau:
+        agr_series.append(dict(x=nd_tau, y=nd_I, mode="symbol", color="grey", legend="below detection (ND)"))
+    export_agr(f"{OUTPUT_NAME}.agr", agr_series,
+               xlabel="Echo delay tau (us) = L0 x tau_rotor", ylabel="Intensity (a.u.)",
+               xlog=True, ylog=True, title="7Li T2 solid-echo decay (discrete L0 series)")

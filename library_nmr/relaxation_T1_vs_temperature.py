@@ -5,53 +5,31 @@ import nmrglue as ng
 from scipy.optimize import curve_fit
 
 from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0
+from library_nmr.agr_export import export_agr
 
 # ============================================================
 # T1(T) — VARIABLE-TEMPERATURE T1 RECOVERY, 7Li LLZO, STATIC PROBE 300M
 # library_nmr — companion to relaxation_T1_onepulse_series.py
-# Usage: fill in the DATA paths in the TEMPERATURES dict below (one onepulse
-# D1 series per temperature, exactly like relaxation_T1_onepulse_series.py but
-# repeated 7 times), then run once. Produces one CSV + two figures for the
-# whole VT-T1 series instead of 7 manual re-runs.
+# Fill in the DATA paths in TEMPERATURES below (one onepulse D1 series per
+# temperature), then run once. Produces one CSV + two figures for the whole
+# VT-T1 series instead of manual per-temperature re-runs.
 #
-# Follows protocole_T1_temperature.docx (prepared 13/08, checklist there
-# still valid — recalibrate p1 on this probe, spot-check nutation per
-# temperature, retune per temperature, etc. This script only replaces the
-# "run relaxation_T1_onepulse_series.py by hand at each T" step).
+# Model selection per temperature follows the article's Materials and method
+# (Relaxation curve fitting): biexponential if >=5 usable points, mono if
+# 3-4, a simple two-point estimate if only 2.
 #
-# Processing (GRPDLY correction, apodization, FFT, phasing) is built on the
-# same shared core.process_row / core.find_best_ph0 as every other script in
-# this package, so a given D1 point processed by either script gives the
-# same intensity.
-#
-# Model selection per temperature follows the same rule already stated in
-# the article's Materials and method (Relaxation curve fitting): biexponential
-# if >=5 usable points, monoexponential if 3-4 points, a simple two-point
-# estimate if only 2 points are usable. The short "survol" grids (7 points)
-# should support a biexponential fit but may leave T1_fast poorly constrained
-# at some temperatures — check the printed uncertainties, don't just trust
-# convergence.
-#
-# IMPORTANT — reference value for the RT sanity check below:
-# the 298K point in this VT series is meant to reproduce the 400M MAS
-# room-temperature result under the new static-probe configuration. Compare
-# it against the CORRECTED, weighted-fit value from
-# relaxation_T1_onepulse_series.py (17/08 fix) — NOT the older, unweighted
-# value quoted in protocole_T1_temperature.docx, which predates that fix
-# and is superseded. Fill in REF_298K_T1_SLOW / REF_298K_T1_FAST (and their
-# error bars) below from your own verified fit before running this script —
-# deliberately left blank here since this repository is public and those
-# numbers are part of an unpublished manuscript. The script checks this
-# automatically once filled in.
+# RT (298K) sanity check below compares against the CORRECTED, weighted-fit
+# value from relaxation_T1_onepulse_series.py — fill in REF_298K_T1_SLOW /
+# REF_298K_T1_FAST (and error bars) from your own verified fit before
+# running; left blank here since this repo is public and those numbers are
+# part of an unpublished manuscript. Skipped automatically while None.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
 #
-# One entry per temperature. D1 grids and NS below are copied verbatim from
-# protocole_T1_temperature.docx (13/08) — edit only if the actual grid used
-# on the day differed. Fill in "TODO" with the Bruker experiment folder for
-# each D1 point once acquired (same convention as relaxation_T1_onepulse_series.py's
-# DATASETS dict: D1 in seconds -> path).
+# One entry per temperature. D1 grids and NS copied from
+# protocole_T1_temperature.docx (13/08); fill in "TODO" with the Bruker
+# experiment folder for each D1 point once acquired.
 TEMPERATURES = {
     200: {
         "T_C": -73,
@@ -158,30 +136,23 @@ TEMPERATURES = {
     },
 }
 
-# Reference RT values for the sanity check (weighted fit, 17/08 — see
-# relaxation_T1_onepulse_series.py). Do NOT replace with the older unweighted
-# numbers from protocole_T1_temperature.docx. Left as None here (public
-# repo, unpublished numbers) — fill in from your own results before running;
-# the sanity check below is skipped automatically while these are None.
+# Reference RT values for the sanity check (weighted fit -- see
+# relaxation_T1_onepulse_series.py). Left as None (public repo, unpublished
+# numbers) -- fill in from your own results; check skipped while None.
 REF_298K_T1_SLOW = None      # s -- e.g. 25.5
 REF_298K_T1_SLOW_ERR = None  # s
 REF_298K_T1_FAST = None      # s
 REF_298K_T1_FAST_ERR = None  # s
 RT_SANITY_TOLERANCE = 0.20   # warn if the new 298K T1_slow differs by more than 20%
 
-LB = 10  # line broadening in Hz — same as relaxation_T1_onepulse_series.py; revisit if the
-         # static-probe lineshape needs a different value
-PH0_MANUAL = 0.0   # PHC0 fallback, degrees — recalibrate once you have real spectra
+LB = 10  # line broadening in Hz -- same as relaxation_T1_onepulse_series.py
+PH0_MANUAL = 0.0   # PHC0 fallback, degrees -- recalibrate once you have real spectra
 PH1 = 0.0          # PHC1 fallback, degrees
 AUTO_PH0 = True    # automatic PH0 search by maximizing the real part
 READ_PHASE_FROM_PROCS = False
-REFERENCE_SHIFT_PPM = 0.0   # re-referencing offset — recalibrate for the static probe/300M
-ZF_FACTOR = 1  # zero-filling multiplier: total FFT length = N*(1+ZF_FACTOR) — so
-                 # 0=none, 1=double, 3=quadruple (NOT 1=none/2=double/4=quadruple;
-                 # same convention as pipeline_1d.py)
-PEAK_PPM_WINDOW = (100, -100)  # static powder pattern is much wider than the MAS
-                                 # spectrum (see protocol checklist) — widen/narrow
-                                 # after looking at the first real spectrum
+REFERENCE_SHIFT_PPM = 0.0   # re-referencing offset -- recalibrate for the static probe/300M
+ZF_FACTOR = 1  # zero-filling multiplier: total FFT length = N*(1+ZF_FACTOR)
+PEAK_PPM_WINDOW = (100, -100)  # static powder pattern is much wider than the MAS spectrum
 MIN_POINTS_BIEXP = 5   # matches the article's Materials and method rule
 MIN_POINTS_MONOEXP = 3
 OUTPUT_NAME = "T1_vs_temperature"
@@ -285,10 +256,8 @@ def fit_one_temperature(T_K, cfg):
         try:
             p0 = [1.1 * I.max(), 0.2, 0.5, D1[D1 > D1.max() / 4].mean()]
             bounds = ([0.5 * I.max(), 0, 0.001, 1], [5 * I.max(), 1, 20, 500])
-            # sigma=I weighting is required -- see the module docstring in
-            # relaxation_T1_onepulse_series.py / relaxation_T1_components.py
-            # for the history of this exact bug (unweighted fits bias
-            # T1_fast, previously found and fixed, once regressed).
+            # sigma=I weighting required -- unweighted fits bias T1_fast
+            # (see relaxation_T1_onepulse_series.py).
             popt, pcov = curve_fit(biexp_recovery, D1, I, p0=p0, sigma=I, maxfev=50000, bounds=bounds)
             perr = np.sqrt(np.diag(pcov))
             M0, f, T1fast, T1slow = popt
@@ -310,12 +279,9 @@ def fit_one_temperature(T_K, cfg):
         result.update(model="monoexponential", M0=M0, T1_slow=T1, T1_slow_err=T1e, frac_slow=100.0)
         print(f"  monoexponential fit: T1={T1:.3g}+/-{T1e:.2g}s")
     elif result["model"] is None and n == 2:
-        # Simple two-point estimate, as used in the article for the sparsest series.
-        # Needs an assumed fully-relaxed plateau Iinf strictly above both points --
-        # with only 2 points there is no way to estimate Iinf from the data itself
-        # (unlike I.max(), which just equals the longer-D1 point here and makes the
-        # log() below blow up). Uses a fixed 20% headroom above the longer-D1 point
-        # as a rough plateau; treat the result as indicative only and refine by hand.
+        # Two-point estimate (per article) -- needs an assumed fully-relaxed
+        # plateau Iinf strictly above both points; fixed 20% headroom above
+        # the longer-D1 point. Indicative only, refine by hand.
         t1, t2 = D1
         i1, i2 = I
         Iinf = 1.2 * max(i1, i2)
@@ -380,13 +346,20 @@ if __name__ == "__main__":
     ax.spines["right"].set_visible(False)
     plt.savefig(f"{OUTPUT_NAME}_vs_T.pdf")
 
+    agr_series_1 = [dict(x=valid["T_K"], y=valid["T1_slow"], mode="symbol", color="purple",
+                          legend="T1 slow (or single T1)")]
+    if not biexp.empty:
+        agr_series_1.append(dict(x=biexp["T_K"], y=biexp["T1_fast"], mode="symbol", color="orange",
+                                  legend="T1 fast"))
+    export_agr(f"{OUTPUT_NAME}_vs_T.agr", agr_series_1,
+               xlabel="Temperature (K)", ylabel="T1 (s)", ylog=True,
+               title="7Li T1(T) -- static probe, 300M")
+
     # --- Plot 2: Arrhenius-style plot (ln(1/T1) vs 1000/T) ---
-    # Deliberately NOT auto-fitting an activation energy here: with only 7
-    # temperatures spanning 200-400K, it is unknown a priori whether a T1
-    # minimum falls inside this window. An Arrhenius/BPP activation energy is
-    # only meaningful on ONE side of the minimum (if any) -- fit that by hand
-    # on whichever subset looks linear once you see the real data shape,
-    # don't regress blindly through all 7 points.
+    # Deliberately NOT auto-fitting an activation energy: with only 7 temperatures
+    # spanning 200-400K it's unknown a priori whether a T1 minimum falls inside
+    # this window, and Ea is only meaningful on one side of the minimum (if any) --
+    # fit that by hand on whichever subset looks linear once you see the data.
     fig2, ax2 = plt.subplots(figsize=(8, 5.5))
     inv_T1_slow = 1.0 / valid["T1_slow"]
     ax2.plot(1000.0 / valid["T_K"], np.log(inv_T1_slow), "o-", color="purple", label="ln(1/T1 slow)")
@@ -397,6 +370,12 @@ if __name__ == "__main__":
     ax2.spines["top"].set_visible(False)
     ax2.spines["right"].set_visible(False)
     plt.savefig(f"{OUTPUT_NAME}_arrhenius.pdf")
+
+    agr_series_2 = [dict(x=1000.0 / valid["T_K"], y=np.log(inv_T1_slow), mode="symbol",
+                          color="purple", legend="ln(1/T1 slow)")]
+    export_agr(f"{OUTPUT_NAME}_arrhenius.agr", agr_series_2,
+               xlabel="1000 / T (K^-1)", ylabel="ln(1/T1)",
+               title="Arrhenius-style plot -- inspect shape before fitting Ea by hand")
 
     plt.show()
     print("\nDone. Figures saved as "

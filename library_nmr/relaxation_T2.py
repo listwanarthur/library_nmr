@@ -5,15 +5,13 @@ import nmrglue as ng
 from scipy.optimize import curve_fit
 
 from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0, parse_bruker_delay
+from library_nmr.agr_export import export_agr
 
 # ============================================================
 # PSEUDO-2D T2 EXTRACTION — nmr_library
 # Usage: edit the CONFIGURATION block below, then run.
-#
-# Purpose: read a pseudo-2D spin-echo experiment (varying echo delay d4,
-# from a vdlist), extract peak intensity per row, and fit a monoexponential
-# T2 decay. Kept as a separate, single-purpose script (see main pipeline
-# and multi-spectrum comparison scripts for other tasks).
+# Reads a pseudo-2D spin-echo experiment (varying echo delay d4 from a
+# vdlist), extracts peak intensity per row, fits a monoexponential T2 decay.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
@@ -24,16 +22,12 @@ PH1 = 0.0  # PHC1 in degrees
 AUTO_PH0 = True  # True: automatic PH0 search (see note below on which row is used)
 READ_PHASE_FROM_PROCS = False  # read ph0/ph1 from TopSpin procs instead — priority over AUTO_PH0
 USE_REAL_PART = True  # True: use Re(spectrum) (needs a properly phased spectrum, preferred).
-                       # False: use |spectrum| (magnitude) — more forgiving if phase drifts
-                       # slightly row to row, but loses lineshape information and can bias
-                       # intensities upward at low S/N (magnitude never averages to zero noise).
+                       # False: use |spectrum| — more forgiving of row-to-row phase drift, but
+                       # loses lineshape info and biases intensity upward at low S/N.
 PPM_MIN = -10  # search window to locate the peak (on the most intense row)
 PPM_MAX = 10
-EXTRACTION_HALFWIDTH_PPM = 0.2  # intensity extracted as the mean over
-    # [peak_position - halfwidth, peak_position + halfwidth] rather than a single point,
-    # for robustness against point-to-point noise. Set to 0 to use the single nearest point.
-NOISE_REGION_PPM = (-40, -30)  # a signal-free region, used to estimate noise level and
-    # report signal-to-noise ratio per row — critical diagnostic if the T2 fit looks flat/failed
+EXTRACTION_HALFWIDTH_PPM = 0.2  # intensity = mean over +/- halfwidth ppm (0 = single nearest point)
+NOISE_REGION_PPM = (-40, -30)  # signal-free region, for S/N diagnostic per row
 OUTPUT_NAME = "T2_pseudo2D"
 # ================================================
 
@@ -62,10 +56,8 @@ O1 = dic["acqus"]["O1"]
 dt = 1 / SW_h
 
 # --- Read the echo delay list (vdlist) — REQUIRED, no silent fallback ---
-# NOTE: dic["acqus"]["D"][4:4+n_rows] is NOT a valid substitute — D[4], D[5], D[6]...
-# are distinct, unrelated Bruker delays (d4, d5, d6...), not successive values of a
-# single varied delay. Using them would silently produce a physically meaningless
-# T2 axis. If vdlist is missing, fix the acquisition/export rather than guessing.
+# NOTE: dic["acqus"]["D"][4:4+n_rows] is NOT a substitute — D[4], D[5], D[6]... are
+# distinct, unrelated Bruker delays, not successive values of one varied delay.
 try:
     with open(f"{PATH}/vdlist", "r") as f:
         d4_values = np.array([parse_bruker_delay(line) for line in f if line.strip()])
@@ -93,8 +85,7 @@ if READ_PHASE_FROM_PROCS:
 else:
     ph1_deg = PH1
     if AUTO_PH0:
-        # Use the row with the strongest signal (shortest echo delay = least decayed)
-        # to determine PH0 — most reliable S/N for the phase search.
+        # use the row with the strongest signal (shortest d4) — best S/N for the phase search
         idx_strongest = int(np.argmin(d4_values))
         signal_ref = process_row(data[idx_strongest], dt, LB, 0.0, np.deg2rad(ph1_deg), grpdly_shift)
         ph0_deg = find_best_ph0(signal_ref, np.deg2rad(ph1_deg))
@@ -106,9 +97,8 @@ ph0_rad = np.deg2rad(ph0_deg)
 ph1_rad = np.deg2rad(ph1_deg)
 
 # --- Process all rows with the SAME phase ---
-# NOTE: process_row uses np.roll for GRPDLY (circular shift), which does NOT
-# change the array length — so the ppm axis must use the ORIGINAL point count,
-# not a shortened one.
+# NOTE: process_row uses np.roll for GRPDLY (circular shift), which does not change
+# array length, so the ppm axis must use the original point count.
 n_points = data.shape[1]
 f = np.fft.fftshift(np.fft.fftfreq(n_points, dt))
 delta = (O1 - f) / SFO1
@@ -119,8 +109,8 @@ spectra = np.array([
 ])
 spectra_real = spectra.real if USE_REAL_PART else np.abs(spectra)
 
-# --- Locate the peak on the strongest row, then extract at that FIXED position
-#     for every row (avoids picking up noise peaks at long/decayed delays) ---
+# --- Locate the peak on the strongest row, then extract at that FIXED position for every
+#     row (avoids picking up noise peaks at long/decayed delays) ---
 idx_strongest = int(np.argmin(d4_values))
 window_mask = (delta >= PPM_MIN) & (delta <= PPM_MAX)
 idx_in_window = np.argmax(spectra_real[idx_strongest][window_mask])
@@ -136,7 +126,7 @@ else:
 
 intensities = np.array([np.mean(row[extraction_mask]) for row in spectra_real])
 
-# --- Signal-to-noise diagnostic (important if the T2 fit looks flat / fails) ---
+# --- Signal-to-noise diagnostic (important if the fit looks flat / fails) ---
 noise_mask = (delta >= min(NOISE_REGION_PPM)) & (delta <= max(NOISE_REGION_PPM))
 noise_std_per_row = np.array([np.std(row[noise_mask]) for row in spectra_real])
 snr_per_row = intensities / noise_std_per_row
@@ -168,6 +158,15 @@ ax.spines["top"].set_visible(False)
 ax.spines["right"].set_visible(False)
 plt.savefig(f"{OUTPUT_NAME}.pdf")
 plt.show()
+
+agr_series = [
+    dict(x=2 * d4_values * 1000, y=intensities, mode="symbol", color="blue", legend="data"),
+    dict(x=2 * d4_fit * 1000, y=t2_decay(d4_fit, *popt), mode="line", color="red",
+         legend=f"fit T2={T2*1000:.3f} ms"),
+]
+export_agr(f"{OUTPUT_NAME}.agr", agr_series,
+           xlabel="Echo time 2×d4 (ms)", ylabel="Intensity (a.u.)",
+           title="T2 relaxation — solid echo", xlog=True)
 
 # --- CSV export ---
 df = pd.DataFrame({

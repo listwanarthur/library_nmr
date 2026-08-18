@@ -3,34 +3,25 @@ import matplotlib.pyplot as plt
 import nmrglue as ng
 
 from library_nmr.core import find_grpdly_shift, parse_bruker_delay
+from library_nmr.agr_export import export_agr
 
 # ============================================================
 # CHECK_DRIFT — standalone diagnostic for pseudo-2D Bruker datasets
 # Usage: edit PATH below, then run.
-#
-# Purpose: on long, unlocked pseudo-2D acquisitions (T1, T2...), checks
-# whether the peak position (ppm) and/or overall intensity drift row by
-# row, INDEPENDENTLY of the swept delay (vd/vc). If position drifts
-# monotonically or intensity shows a trend vs row INDEX (not vs delay),
-# that's a strong signature of B0/shim/temperature drift over the course
-# of the acquisition rather than real T1/T2 physics.
-#
-# Works on any 1D-per-row pseudo-2D dataset (echosolid_T2.al, t1_sr.al,
-# etc.) — doesn't assume anything about the pulse sequence beyond
-# "one FID per row".
+# Purpose: checks whether peak position/intensity drift vs ROW INDEX (not vs
+# delay) on long unlocked pseudo-2D acquisitions — a trend vs index, independent
+# of vd/vc, signals B0/shim/temperature drift rather than real T1/T2 physics.
+# Works on any 1D-per-row pseudo-2D dataset.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
 PATH = r"D:\Postdoc\Datas\LLZO-400-aug26\219"
 LB = 50
-PPM_MIN, PPM_MAX = -25, 25    # window covering the full lineshape (both
-                               # components) — widen if your peaks are wider
+PPM_MIN, PPM_MAX = -25, 25  # window covering the full lineshape (both components); widen if peaks are wider
 OUTPUT_NAME = "drift_check"
 # ================================================
-# NOTE: this version works in MAGNITUDE mode (|spectrum|), not absorption
-# mode. Magnitude is phase-independent, so it sidesteps any per-row
-# autophasing noise entirely — we only care about position/intensity
-# stability here, not lineshape quality.
+# NOTE: works in MAGNITUDE mode (|spectrum|), not absorption — phase-independent,
+# so it sidesteps per-row autophasing noise entirely.
 
 
 def process_row_magnitude(fid, dt, LB, grpdly_shift):
@@ -55,16 +46,8 @@ SFO1 = dic["acqus"]["SFO1"]
 O1 = dic["acqus"]["O1"]
 dt = 1 / SW_h
 
-# --- CAVEAT (added 18/08): this script's whole logic is "trend vs ROW INDEX =
-# drift, trend vs DELAY = physics". That separation is only valid if row index
-# and delay are NOT monotonically correlated — e.g. a randomized/interleaved
-# delay list. For a T1/T2 series acquired with delays in increasing (or
-# decreasing) order — as the LLZO VT-T1 protocol currently does — row index
-# and delay move together, so a genuine two-component relaxation curve WILL
-# also show a strong trend vs row index, and this script cannot tell that
-# apart from real drift. We load the actual vd/vc list (if present next to
-# the dataset) and check monotonicity so this gets flagged explicitly instead
-# of silently mis-reported.
+# CAVEAT: "drift vs row index" only separates from "physics vs delay" if row
+# index isn't monotonically correlated with delay — check monotonicity below.
 delay_values = None
 delay_source = None
 for fname in ("vdlist", "vclist"):
@@ -170,3 +153,24 @@ plt.tight_layout()
 plt.savefig(f"{OUTPUT_NAME}.pdf")
 plt.show()
 print(f"\nPlot saved to {OUTPUT_NAME}.pdf")
+
+export_agr(
+    f"{OUTPUT_NAME}_position.agr",
+    series=[
+        dict(x=rows, y=positions, mode="symbol", color="blue", legend="position"),
+        dict(x=rows, y=pos_slope * rows + pos_intercept, mode="line", color="black",
+             legend=f"slope={pos_slope*SFO1:.2f} Hz/row"),
+    ],
+    xlabel="Row index (acquisition order)", ylabel="Peak position (ppm)",
+    title="Peak position vs row index",
+)
+export_agr(
+    f"{OUTPUT_NAME}_intensity.agr",
+    series=[
+        dict(x=rows, y=intensities, mode="symbol", color="red", legend="intensity"),
+        dict(x=rows, y=int_slope * rows + int_intercept, mode="line", color="black",
+             legend=f"drift={int_drift_pct:.1f}% total"),
+    ],
+    xlabel="Row index (acquisition order)", ylabel="Integrated intensity (a.u.)",
+    title="Intensity vs row index (drift check)",
+)
