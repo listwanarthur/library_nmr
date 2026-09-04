@@ -47,6 +47,63 @@ with them.
 | `calibration_dft.py` | GIPAW/DFT chemical-shift calibration from reference compounds, with leave-one-out cross-validation |
 | `core.py` | Shared low-level building blocks: GRPDLY handling, FID processing, automatic phasing, Bruker delay-list parsing |
 | `fitting.py` | Shared pseudo-Voigt lineshape fitting (single and multi-component) |
+| `agr_export.py` | Shared: writes matplotlib-style series to a Grace (`.agr`) project file for reopening/polishing in Xmgrace — used by all the figure-producing scripts below |
+
+## T1/T2 relaxation vs. temperature (per-campaign scripts)
+
+One script per temperature/campaign, all built on the shared `core.py` /
+`agr_export.py` functions above rather than duplicating that logic. Kept
+as separate scripts (not parametrized into one) because each campaign
+picked up its own real-world complications (RG changes, lot-mixing,
+noise-floor artifacts) that are easier to document and audit per-script
+than to hide behind a generic config.
+
+| Module | Purpose |
+|---|---|
+| `T1_recovery_static_298K.py` | T1 at 298K, static probe, magnitude mode: mixes two RG blocks (archive + plateau-closing addition) via an empirical cross-calibration correction |
+| `T1_recovery_static_298K_RG94_only.py` | Same 298K T1 grid restricted to the single self-consistent RG=94.34 block — sidesteps the RG cross-calibration correction entirely |
+| `T1_global_statique_298K_peakwindow_test.py` | 298K T1, RG=94.34-only night session, peak-window sensitivity check |
+| `T1_recovery_static_315K.py` | T1 at 315K (new sep26 campaign), two independent 19-point series compared for reproducibility |
+| `T1_recovery_static_330K.py` | T1 at 330K, grid re-acquired in two consecutive series after a lot-mixing artifact was diagnosed in the first attempt (see `Check_lot_reproducibility.py`) |
+| `T1_recovery_330K_v2.py` | 330K T1 redone as one continuous 21-point session after a probe remount, D1 extended to 500s to fully close the recovery plateau |
+| `T1_recovery_static_345K.py` | T1 at 345K, same biexp/triexp pipeline as 315K, D1 grid extended to 400/500s from the start (plateau-closing lesson applied up front) |
+| `T1_recovery_static_360K.py` | T1 at 360K, NS boosted on the shortest D1 points to fix an SNR/mispick issue first seen at 330K |
+| `T1_comparaison_VT.py` / `T1_comparaison_VT_v2.py` | Overlay T1(D1) recovery curves across all temperatures from the already-exported per-temperature CSVs (v2 unifies the x-axis on D1+AQ throughout, including in the fit itself, not just the display) |
+| `T2_recovery_static_298K.py` | T2 at 298K, fine echo-delay grid with dedicated noise-floor cross-checks (`PLATEAU_CHECK`, `NS_CROSSCHECK`) |
+| `T2_recovery_static_315K.py` | T2 at 315K (sep26 campaign), grid extended further to directly verify the noise-floor threshold established at other temperatures |
+| `T2_recovery_static_330K.py` | T2 at 330K, fine grid plus an NS cross-check exposing a magnitude-mode noise-floor signature at long echo delays |
+| `T2_recovery_static_345K.py` | T2 at 345K, lighter grid informed by the 315K diagnostic (skips the ambiguous long-echo-delay zone) |
+| `T2_recovery_static_360K.py` | T2 at 360K, same pipeline as 330K, with an NS=64 vs NS=220 cross-check at the longest echo delays |
+| `T2_comparaison_VT.py` | Overlay T2(echo delay) decay curves across all temperatures; monoexponential rather than biexponential, since the cross-checks showed the apparent "T2_slow" component was a noise-floor fitting artifact, not real signal |
+
+## Cross-checks & diagnostics
+
+Small scripts written to answer one specific question about the data
+(is this artifact real? is the phasing stable?) rather than to produce a
+final figure — kept in the repo alongside the main scripts because the
+answer they gave shaped a methodology decision upstream (e.g. the
+monoexponential-only choice in `T2_comparaison_VT.py` above).
+
+| Module | Purpose |
+|---|---|
+| `Check_lot_reproducibility.py` | Compares intensity-per-scan between two acquisition lots at a shared D1 point — the diagnostic that caught the 330K lot-mixing artifact |
+| `Check_T2_298K_NS_crosscheck.py` | NS=64 vs NS=220 intensity comparison at fixed echo delay — isolates a magnitude-mode noise-floor bias from real T2 decay |
+| `diagnostic_T1_ph0_scan.py` | Quick PH0 comparison overlay on a single T1-series spectrum |
+| `diagnostic_T1_ph1_sidebands_scan.py` | Wide PH1 sweep to re-check phasing against the spinning sidebands |
+| `diagnostic_T1_series_overlay.py` | Overlays spectra from several D1 points of a T1 series to sanity-check phasing/lineshape consistency across the series |
+| `diagnostic_T2_ph0_scan.py` | PH0 sweep on the best-S/N T2 spectrum |
+| `diagnostic_T2_fit_robustness.py` | Refits exported per-component T2 amplitudes under different sigma-weighting choices to check the fit isn't sensitive to that choice |
+| `diagnostic_T2_model_comparison.py` | Mono- vs bi-exponential model comparison on exported per-component T2 amplitudes |
+| `interactive_phase_slider.py` | Matplotlib slider widget for live PH0/PH1 phasing on a single spectrum |
+
+## Other characterization
+
+| Module | Purpose |
+|---|---|
+| `diagnostic_satellite_CQ_fit.py` | Exploratory ⁷Li CQ estimate from the static satellite transitions (first-order quadrupolar powder pattern, Monte-Carlo orientation average, I=3/2) |
+| `Spectre_statique_298K_satellites_CQfit.py` | Same CQ fit turned into an article-ready figure: full +/-400 ppm static spectrum with the fitted powder pattern overlaid, exported via `agr_export.py` |
+| `spectrum_static.py` | Static ⁷Li spectrum export in two views (narrow central transition, wide satellites) |
+| `Analyse_XRD.py` | XRD phase-purity check: peak detection + theoretical Bragg positions for tetragonal/cubic LLZO and La2Zr2O7, to screen for high-temperature decomposition contamination (qualitative screen, not a Rietveld refinement — see the module docstring for the method's limits) |
 
 ## Example
 
@@ -99,10 +156,23 @@ pip install pytest
 pytest tests/
 ```
 
-`core.py` and `fitting.py` are covered by unit tests built on synthetic
-data with known ground truth (e.g. recovering injected pseudo-Voigt
-parameters, or a known phase error) — see `tests/test_core.py` and
-`tests/test_fitting.py`.
+`core.py`, `fitting.py` and `agr_export.py` are covered by unit tests
+built on synthetic data or known ground truth (e.g. recovering injected
+pseudo-Voigt parameters, a known phase error, or checking the `.agr`
+output stays valid Grace format across edge-case axis ranges) — see
+`tests/test_core.py`, `tests/test_fitting.py` and
+`tests/test_agr_export.py`. Two further tests are regression guards for
+bugs found once in this project's actual use and fixed: a `sigma=`
+weighting bug in the biexponential relaxation fits
+(`tests/test_relaxation_T1_sigma_weighting.py`) and a lineshape-reference
+bug in the T2 per-component fit (`tests/test_relaxation_T2_components.py`).
+
+The per-temperature/per-campaign scripts (`T1_recovery_static_*.py`,
+`T2_recovery_static_*.py`, the `Check_*`/`diagnostic_*` scripts, etc.)
+are not unit tested: they operate on real Bruker acquisitions that
+aren't part of this repository, so there's no fixture to test them
+against here. Their logic goes through the tested `core.py` /
+`fitting.py` / `agr_export.py` functions above.
 
 ## Full runnable example (notebook)
 
@@ -140,6 +210,7 @@ library_nmr/                             (repo root)
 │   ├── __init__.py
 │   ├── core.py                              # shared: GRPDLY, FID processing, phasing, delay parsing
 │   ├── fitting.py                           # shared: pseudo-Voigt fitting
+│   ├── agr_export.py                        # shared: matplotlib series -> Grace (.agr) export
 │   ├── pipeline_1d.py                       # main 1D processing + fitting
 │   ├── multi_spectra_comparison.py
 │   ├── check_drift.py
@@ -154,11 +225,32 @@ library_nmr/                             (repo root)
 │   ├── relaxation_T2_echo_series.py
 │   ├── relaxation_T2_components.py
 │   ├── mqmas_2d_processing.py
-│   └── calibration_dft.py
+│   ├── calibration_dft.py
+│   ├── spectrum_static.py
+│   ├── diagnostic_satellite_CQ_fit.py
+│   ├── Spectre_statique_298K_satellites_CQfit.py
+│   ├── Analyse_XRD.py
+│   ├── interactive_phase_slider.py
+│   ├── Check_lot_reproducibility.py
+│   ├── Check_T2_298K_NS_crosscheck.py
+│   ├── diagnostic_T1_ph0_scan.py
+│   ├── diagnostic_T1_ph1_sidebands_scan.py
+│   ├── diagnostic_T1_series_overlay.py
+│   ├── diagnostic_T2_ph0_scan.py
+│   ├── diagnostic_T2_fit_robustness.py
+│   ├── diagnostic_T2_model_comparison.py
+│   ├── T1_comparaison_VT.py
+│   ├── T1_comparaison_VT_v2.py
+│   ├── T2_comparaison_VT.py
+│   ├── T1_global_statique_298K_peakwindow_test.py
+│   ├── T1_recovery_static_298K.py           # + _298K_RG94_only, _315K, _330K, _345K, _360K
+│   ├── T1_recovery_330K_v2.py
+│   └── T2_recovery_static_298K.py           # + _315K, _330K, _345K, _360K
 ├── tests/                                (unit tests, pytest)
 │   ├── __init__.py
 │   ├── test_core.py
 │   ├── test_fitting.py
+│   ├── test_agr_export.py
 │   ├── test_relaxation_T2_components.py
 │   └── test_relaxation_T1_sigma_weighting.py
 └── examples/                             (runnable notebook demo)
