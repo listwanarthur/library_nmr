@@ -44,14 +44,14 @@ DATASETS = {
     150: r"D:\Postdoc\Datas\LLZO-400-aug26\236",
 }
 LB = 10  # line broadening in Hz (10-200 Hz typical for solids)
-PH0_MANUAL = -103.394  # PHC0 in degrees, used only if AUTO_PH0 = False
+PH0_MANUAL = 21  # PHC0 in degrees, used only if AUTO_PH0 = False
 PH1 = -49.524  # PHC1 in degrees (first-order phase correction)
-AUTO_PH0 = True  # True: automatic PH0 search by maximizing the real part
+AUTO_PH0 = False  # True: automatic PH0 search by maximizing the real part
 READ_PHASE_FROM_PROCS = False  # set True to read ph0/ph1 from TopSpin (procs) — takes priority over AUTO_PH0
 REFERENCE_SHIFT_PPM = 2  # additive shift applied to the ppm axis (referencing) — same convention as pipeline_1d.py
 ZF_FACTOR = 1  # zero-filling multiplier: total FFT length = N*(1+ZF_FACTOR); 0=none, 1=double, 3=quadruple
 PEAK_PPM_WINDOW = (30, -30)  # window to search for the peak max (same span as your ZOOM)
-OUTPUT_NAME = "T1_recovery_fit"
+OUTPUT_NAME = r"D:\Postdoc\Figures\T1_global_MAS_298K"
 # ================================================
 
 
@@ -115,6 +115,10 @@ def biexp_recovery(t, M0, f, T1a, T1b):
     """M0 * (1 - f*exp(-t/T1a) - (1-f)*exp(-t/T1b))"""
     return M0 * (1 - f * np.exp(-t / T1a) - (1 - f) * np.exp(-t / T1b))
 
+def triexp_recovery(t, M0, f1, f2, T1a, T1b, T1c):
+    """M0 * (1 - f1*exp(-t/T1a) - f2*exp(-t/T1b) - (1-f1-f2)*exp(-t/T1c))"""
+    return M0 * (1 - f1 * np.exp(-t / T1a) - f2 * np.exp(-t / T1b) - (1 - f1 - f2) * np.exp(-t / T1c))
+
 
 if __name__ == "__main__":
     # === PROCESSING ===
@@ -148,61 +152,73 @@ if __name__ == "__main__":
         print("\nNeed at least 5 usable points for a stable biexponential fit.")
         raise SystemExit
 
-    p0 = [1.1 * I.max(), 0.2, 0.5, D1[D1 > D1.max() / 4].mean()]
-    bounds = ([0.5 * I.max(), 0, 0.001, 1], [5 * I.max(), 1, 20, 500])
-    # CAUTION: sigma=I is required — an unweighted fit is dominated by the
-    # large-amplitude long-D1 points and starves short-D1 points where T1_fast
-    # lives (~15-18% residual trend at short D1 otherwise). Do not remove.
-    popt, pcov = curve_fit(biexp_recovery, D1, I, p0=p0, sigma=I, maxfev=50000, bounds=bounds)
+    p0 = [1.1 * I.max(), 0.03, 0.05, 0.02, 2, 30]
+    bounds = ([0.5 * I.max(), 0, 0, 0.001, 0.01, 1], [5 * I.max(), 0.5, 0.5, 1, 20, 500])
+    popt, pcov = curve_fit(triexp_recovery, D1, I, p0=p0, sigma=I, maxfev=50000, bounds=bounds)
     perr = np.sqrt(np.diag(pcov))
-    M0, f, T1fast, T1slow = popt
-    M0e, fe, T1faste, T1slowe = perr
+    M0, f1, f2, T1a, T1b, T1c = popt
+    M0e, f1e, f2e, T1ae, T1be, T1ce = perr
+    f3 = 1 - f1 - f2
 
-    print("\n--- T1 biexponential recovery fit ---")
-    print(f"M0        = {M0:.4e} +/- {M0e:.2e}")
-    print(f"T1_fast   = {T1fast:.3g} s  +/- {T1faste:.2g} s   (fraction = {f*100:.1f}% +/- {fe*100:.1f}%)")
-    print(f"T1_slow   = {T1slow:.3g} s  +/- {T1slowe:.2g} s   (fraction = {(1-f)*100:.1f}%)")
+    print("\n--- T1 triexponential recovery fit ---")
+    print(f"M0  = {M0:.4e} +/- {M0e:.2e}")
+    print(f"T1a = {T1a:.3g} s +/- {T1ae:.2g} s   (fraction = {f1 * 100:.1f}% +/- {f1e * 100:.1f}%)")
+    print(f"T1b = {T1b:.3g} s +/- {T1be:.2g} s   (fraction = {f2 * 100:.1f}% +/- {f2e * 100:.1f}%)")
+    print(f"T1c = {T1c:.3g} s +/- {T1ce:.2g} s   (fraction = {f3 * 100:.1f}%)")
 
-    resid = I - biexp_recovery(D1, *popt)
+    for label, mask in [("tous", np.ones_like(D1, dtype=bool)),
+                        ("sans D1=150", D1 != 150),
+                        ("sans D1=120,150", ~np.isin(D1, [120, 150]))]:
+        popt_i, pcov_i = curve_fit(triexp_recovery, D1[mask], I[mask], p0=p0, sigma=I[mask], maxfev=50000,
+                                   bounds=bounds)
+        print(label, "T1c =", popt_i[5], "+/-", np.sqrt(np.diag(pcov_i))[5])
+
+    for label, sigma in [("non pondéré", None), ("sigma=sqrt(I)", np.sqrt(I))]:
+        popt_i, pcov_i = curve_fit(triexp_recovery, D1, I, p0=p0, sigma=sigma, maxfev=50000, bounds=bounds)
+        print(label, "T1c =", popt_i[5], "+/-", np.sqrt(np.diag(pcov_i))[5])
+
+    resid = I - triexp_recovery(D1, *popt)
     rel_resid = 100 * resid / I
     print("\nrelative residuals (%):", np.round(rel_resid, 2))
     if np.any(np.abs(rel_resid) > 15):
-        print("WARNING: some points have >15% residual — check those spectra "
-              "(bad phasing, wrong RG, or a point that needs excluding).")
+        print("WARNING: some points have >15% residual — check those spectra.")
 
-    # --- export (same pandas/CSV convention as pipeline_1d.py) ---
     df = pd.DataFrame({"D1_s": D1, "Intensity": I, "PH0_deg": ph0_list, "residual_pct": rel_resid})
     df.to_csv(f"{OUTPUT_NAME}.csv", index=False)
     print(f"\nResults exported to {OUTPUT_NAME}.csv")
 
-    # --- plot ---
     t_fit = np.logspace(np.log10(D1.min() / 2), np.log10(D1.max() * 1.3), 400)
-    y_fit = biexp_recovery(t_fit, *popt)
+    y_fit = triexp_recovery(t_fit, *popt)
 
     fig, ax = plt.subplots(figsize=(8, 5.5))
     ax.scatter(D1, I, color="blue", s=55, zorder=3, label="data")
-    ax.plot(t_fit, y_fit, color="red", lw=1.5, zorder=2, label="biexponential fit")
+    ax.plot(t_fit, y_fit, color="red", lw=1.5, zorder=2, label="triexponential fit")
     ax.set_xscale("log")
     ax.set_xlabel("Recovery delay D1 (s)")
     ax.set_ylabel("Intensity (a.u.)")
     ax.set_title(r"$^7$Li T$_1$ recovery (onepulse series)")
 
     textstr = (
-        f"$T_1$ slow = {T1slow:.1f} +/- {T1slowe:.1f} s  ({(1-f)*100:.1f}%)\n"
-        f"$T_1$ fast = {T1fast:.2f} +/- {T1faste:.2f} s  ({f*100:.1f}%)"
+        f"$T_1$c = {T1c:.1f} +/- {T1ce:.1f} s  ({f3 * 100:.1f}%)\n"
+        f"$T_1$b = {T1b:.2f} +/- {T1be:.2f} s  ({f2 * 100:.1f}%)\n"
+        f"$T_1$a = {T1a:.3f} +/- {T1ae:.3f} s  ({f1 * 100:.1f}%)"
     )
     ax.text(0.97, 0.05, textstr, transform=ax.transAxes, fontsize=10.5,
-             va="bottom", ha="right",
-             bbox=dict(boxstyle="round", facecolor="white", edgecolor="gray", alpha=0.9))
+            va="bottom", ha="right",
+            bbox=dict(boxstyle="round", facecolor="white", edgecolor="gray", alpha=0.9))
     ax.legend(loc="upper left", frameon=False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     plt.savefig(f"{OUTPUT_NAME}.pdf")
     plt.show()
 
+    fit_legend = (f"tri-exp fit: T1slow={T1c:.1f}+/-{T1ce:.1f}s ({f3 * 100:.1f}%), "
+                  f"T1med={T1b:.2f}+/-{T1be:.2f}s ({f2 * 100:.1f}%), "
+                  f"T1fast={T1a * 1000:.2f}+/-{T1ae * 1000:.2f}ms ({f1 * 100:.1f}%)")
+
     agr_series = [
         dict(x=D1, y=I, mode="symbol", color="blue", legend="data"),
-        dict(x=t_fit, y=y_fit, mode="line", color="red", legend="biexponential fit"),
+        dict(x=t_fit, y=y_fit, mode="line", color="red", legend=fit_legend),
     ]
     export_agr(f"{OUTPUT_NAME}.agr", agr_series,
                xlabel="Recovery delay D1 (s)", ylabel="Intensity (a.u.)",

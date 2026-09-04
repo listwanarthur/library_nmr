@@ -12,32 +12,23 @@ from library_nmr.agr_export import export_agr
 # T2 PER-COMPONENT FIT — library_nmr (echosolide_v2, discrete L0 series)
 # Usage: edit the CONFIGURATION block below, then run
 #
-# Why not a free two-component pseudo-Voigt fit on every spectrum: that
-# decomposition (pipeline_1d.py's fit_group) is already flagged as unstable
-# run-to-run (shape/eta drift, amplitudes going negative) -- worse here since
-# S/N drops fast with increasing echo delay.
-#
-# Strategy used instead:
-#   1) Fit ONE reference spectrum with the normal free fit_group to pin down
-#      position/width/eta for each component.
-#   2) FREEZE those shape parameters. For every other spectrum, only the two
-#      amplitudes are then unknown -- linear in amplitude for fixed shape, so
-#      solved via NNLS (non-negative least squares) instead of a nonlinear
-#      fit, avoiding the unphysical negative amplitudes seen with a free fit.
-#   3) Each component's amplitude vs echo delay is its own T2 decay curve,
+# Free two-component pseudo-Voigt fit on every spectrum (pipeline_1d.py's
+# fit_group) is unstable run-to-run (shape/eta drift, negative amplitudes),
+# worse here as S/N drops fast with echo delay. Strategy used instead:
+#   1) Fit ONE reference spectrum freely to pin down position/width/eta.
+#   2) FREEZE those shape parameters; each spectrum's two amplitudes are
+#      then linear in shape -> solved via NNLS (non-negative least squares).
+#   3) Each component's amplitude vs echo delay is its own T2 decay,
 #      fit independently (biexponential).
 #
-# Reference spectrum is NOT taken from this T2 series: the minimum echo delay
-# achievable under MAS is one full rotor period (tau_rotor=80us, must be
-# rotor-synchronized), and broad's own T2 is short enough that even the
-# first T2 spectrum has already lost a large fraction of broad before it's
-# measured -- using it as shape reference gave a distorted fit (eta_narrow
-# pinned near 1, near-degenerate NNLS basis, broad vanishing beyond L0=2).
-# FIX: the reference shape is now taken from a onepulse spectrum (longest
-# D1, fully relaxed, best S/N -- only the receiver's us-scale dead time, not
-# a rotor-period floor), which gives a balanced eta_narrow/integral split
-# and keeps broad above zero on 10/11 T2 points instead of 2/11. Exact split
-# percentages not reproduced here (public repo, unpublished manuscript).
+# Reference spectrum is NOT from this T2 series: minimum echo delay under
+# MAS is one rotor period (tau_rotor=80us), and broad's own T2 is short
+# enough that even the first T2 point has already lost much of broad --
+# using it as shape reference gave a distorted fit (eta_narrow pinned near
+# 1, near-degenerate NNLS basis, broad vanishing beyond L0=2). Reference is
+# instead a onepulse spectrum (longest D1, fully relaxed, only the
+# receiver's us-scale dead time), which keeps broad above zero on 10/11 T2
+# points instead of 2/11.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
@@ -78,8 +69,6 @@ REFERENCE_PATH = r"D:\Postdoc\Datas\LLZO-400-aug26\236"
 # relaxation times (biexp), not one. broad becomes undetectable (NNLS
 # zeroes it) beyond L0=188 (tau~15ms) -- a genuine physical limit (broad's
 # slow tail is below the noise floor past ~15ms), not a fitting problem.
-# Exact fitted T2_fast/T2_slow values not reproduced here (public repo,
-# unpublished manuscript). Figure: T2_components_fit_v3.png.
 COMPONENT_DECAY_MODEL = {"narrow (fine)": "biexp", "broad (large)": "biexp"}
 
 LB = 10
@@ -89,19 +78,18 @@ AUTO_PH0 = True
 READ_PHASE_FROM_PROCS = False
 REFERENCE_SHIFT_PPM = 2
 ZF_FACTOR = 1
-OUTPUT_NAME = "T2_components_fit"
+OUTPUT_NAME = r"D:\Postdoc\Figures\T2_narrowbroad_MAS_298K"
 
 # Same convention as pipeline_1d.py's PEAKS -- used ONCE, on the reference
 # spectrum only, to determine position/width/eta for each component. The
 # split from an ECHO spectrum (dead-time-limited) was wrong, skewed toward
 # narrow; the corrected split (onepulse reference) shows broad as the
-# MAJORITY population. Exact percentages not reproduced here (public repo,
-# unpublished manuscript).
+# MAJORITY population.
 REFERENCE_PEAKS = {
     "ppm_min": -23, "ppm_max": 27,
     "p0": [
-        [3.5e7, 0.6, 5.8,  0.99],  # narrow component (fine, corrected reference)
-        [1.0e7, 0.6, 15,   0.5 ],  # broad component (large, eta=0, majority population, corrected reference)
+        [3.5e7, 0.6, 5.8,  0.99],  # narrow component (fine)
+        [1.0e7, 0.6, 15,   0.5 ],  # broad component (large, eta=0, majority population)
     ],
     "eta_fixed": [None, 0.0],
     "width_bounds": [(0, 8), (8, 100)],
@@ -158,8 +146,7 @@ def process_1d_spectrum(path, LB, ph0_manual, ph1, zf_factor,
     return delta, spectrum, dic, ph0_deg
 
 
-# pseudo_voigt / sum_pseudo_voigt / fit_group imported from library_nmr.fitting
-# (drop-in replacement, no behavior change).
+# pseudo_voigt / sum_pseudo_voigt / fit_group imported from library_nmr.fitting.
 
 def fit_amplitudes_fixed_shape(delta, signal, ppm_min, ppm_max, components):
     """Solves for the component amplitudes ONLY, with position/width/eta
@@ -199,16 +186,16 @@ if __name__ == "__main__":
     # something the onepulse reference on a different day can supply. ===
     print(f"\n=== Reference SHAPE fit (external onepulse, {REFERENCE_PATH}) ===")
     delta_ref, spectrum_ref, _, _ = process_1d_spectrum(
-        REFERENCE_PATH, LB, PH0_MANUAL, PH1, ZF_FACTOR,
-        auto_ph0=AUTO_PH0, read_phase_from_procs=READ_PHASE_FROM_PROCS,
+        REFERENCE_PATH, LB, 21, PH1, ZF_FACTOR,
+        auto_ph0=False, read_phase_from_procs=False,
         reference_shift_ppm=REFERENCE_SHIFT_PPM
     )
 
     first_l0 = min(DATASETS.keys())
     print(f"\n=== Reference PHASE fit (from this T2 series, L0={first_l0}, {DATASETS[first_l0]}) ===")
     _, _, _, ph0_frozen = process_1d_spectrum(
-        DATASETS[first_l0], LB, PH0_MANUAL, PH1, ZF_FACTOR,
-        auto_ph0=AUTO_PH0, read_phase_from_procs=READ_PHASE_FROM_PROCS,
+        DATASETS[first_l0], LB, -159, PH1, ZF_FACTOR,
+        auto_ph0=False, read_phase_from_procs=False,
         reference_shift_ppm=REFERENCE_SHIFT_PPM
     )
     print(f"  PH0 frozen at {ph0_frozen:.3f} deg for the whole series")
@@ -329,18 +316,21 @@ if __name__ == "__main__":
             t_fit = np.logspace(np.log10(tau.min() / 1.5), np.log10(tau.max() * 1.3), 400)
             ax.plot(t_fit, eval_decay(model, t_fit, popt), color=COMPONENT_COLORS[i], lw=1.5, zorder=2,
                     label=f"{name} — fit")
-            agr_series.append(dict(x=t_fit, y=eval_decay(model, t_fit, popt), mode="line",
-                                    color=COMPONENT_COLORS[i], legend=f"{name} - fit"))
             if model == "biexp":
                 A1, T2fast, A2, T2slow = popt
                 _, T2faste, _, T2slowe = perr
                 frac_fast = 100 * A1 / (A1 + A2)
+                fit_legend = (f"{name} fit: T2fast={T2fast:.0f}+/-{T2faste:.0f}us ({frac_fast:.0f}%), "
+                              f"T2slow={T2slow:.0f}+/-{T2slowe:.0f}us ({100 - frac_fast:.0f}%)")
                 textlines.append(f"{name}: T2fast={T2fast:.0f}+/-{T2faste:.0f}us ({frac_fast:.0f}%), "
-                                  f"T2slow={T2slow:.0f}+/-{T2slowe:.0f}us ({100-frac_fast:.0f}%)")
+                                 f"T2slow={T2slow:.0f}+/-{T2slowe:.0f}us ({100 - frac_fast:.0f}%)")
             else:
                 _, T2 = popt
                 _, T2e = perr
+                fit_legend = f"{name} fit: T2={T2:.0f}+/-{T2e:.0f}us"
                 textlines.append(f"T2 {name} = {T2:.0f} +/- {T2e:.0f} us")
+            agr_series.append(dict(x=t_fit, y=eval_decay(model, t_fit, popt), mode="line",
+                                   color=COMPONENT_COLORS[i], legend=fit_legend))
 
     # below-detection points (never fitted)
     nd_tau, nd_y = [], []

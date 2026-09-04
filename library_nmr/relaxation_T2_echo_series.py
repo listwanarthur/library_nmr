@@ -44,7 +44,7 @@ DATASETS = {
     90:  r"D:\Postdoc\Datas\LLZO-400-aug26\263",
     100: r"D:\Postdoc\Datas\LLZO-400-aug26\264",
     # Extended tau points added 14-15/08 (exp270-275), also used to extend
-    # relaxation_T2_components.py. NOTE: at long tau this GLOBAL fit mixes
+    # relaxation_T2_components.py. At long tau this GLOBAL fit mixes
     # narrow's and broad's differently-decaying tails, so treat T2_slow here
     # as a rough cross-check only — relaxation_T2_components.py's
     # per-component values are the reliable source.
@@ -65,9 +65,9 @@ BELOW_DETECTION = {
 }
 
 LB = 10  # line broadening in Hz (10-200 Hz typical for solids)
-PH0_MANUAL = -103.394  # PHC0 in degrees, used only if AUTO_PH0 = False
+PH0_MANUAL = -159  # PHC0 in degrees, used only if AUTO_PH0 = False
 PH1 = -49.524  # PHC1 in degrees (first-order phase correction)
-AUTO_PH0 = True  # True: automatic PH0 search by maximizing the real part
+AUTO_PH0 = False  # visually validated on exp253 (L0=1) — see relaxation_T2_components.py
 READ_PHASE_FROM_PROCS = False  # set True to read ph0/ph1 from TopSpin (procs) — takes priority over AUTO_PH0
 REFERENCE_SHIFT_PPM = 2  # additive shift applied to the ppm axis (referencing) — same convention as pipeline_1d.py
 ZF_FACTOR = 1  # zero-filling multiplier: total FFT length = N*(1+ZF_FACTOR); 0=none, 1=double, 3=quadruple
@@ -75,7 +75,7 @@ PEAK_PPM_WINDOW = (6, -4)  # kept TIGHT around the real peak on purpose — a wi
     # lets argmax lock onto a noise spike once S/N drops, corrupting both intensity
     # and position. Re-check against your actual peak position before running.
 PHASE_REFERENCE_L0 = None  # L0 to determine PH0 from (frozen for the whole series). None = use the smallest L0 in DATASETS (best S/N).
-OUTPUT_NAME = "T2_echosolide_fit"
+OUTPUT_NAME = r"D:\Postdoc\Figures\T2_global_MAS_298K"
 # ================================================
 
 
@@ -256,12 +256,15 @@ if __name__ == "__main__":
     plt.savefig(f"{OUTPUT_NAME}.pdf")
     plt.show()
 
+    fit_legend = (f"biexp fit: T2fast={T2fast:.0f}+/-{T2faste:.0f}us ({frac_fast:.1f}%), "
+                  f"T2slow={T2slow:.0f}+/-{T2slowe:.0f}us ({frac_slow:.1f}%)")
     agr_series = [
         dict(x=tau, y=I, mode="symbol", color="blue", legend="data"),
-        dict(x=t_fit, y=y_fit, mode="line", color="red", legend="biexponential fit"),
+        dict(x=t_fit, y=y_fit, mode="line", color="red", legend=fit_legend),
     ]
     if nd_tau:
         agr_series.append(dict(x=nd_tau, y=nd_I, mode="symbol", color="grey", legend="below detection (ND)"))
+
     export_agr(f"{OUTPUT_NAME}.agr", agr_series,
                xlabel="Echo delay tau (us) = L0 x tau_rotor", ylabel="Intensity (a.u.)",
                xlog=True, ylog=True, title="7Li T2 solid-echo decay (discrete L0 series)")

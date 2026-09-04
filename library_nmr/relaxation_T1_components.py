@@ -13,23 +13,21 @@ from library_nmr.agr_export import export_agr
 # Usage: edit the CONFIGURATION block below, then run
 #
 # Same strategy as relaxation_T2_components.py: fit ONE reference spectrum
-# freely (pipeline_1d.py's two-component pseudo-Voigt), FREEZE
-# position/width/eta, solve for the two amplitudes at every D1 with NNLS
-# (linear in amplitude for fixed shape), then fit each component's own
-# amplitude vs D1 recovery curve independently. Reference = longest D1
-# (best S/N, fully relaxed) — no dead-time concern here (onepulse), unlike
+# freely (pipeline_1d.py's two-component pseudo-Voigt), freeze
+# position/width/eta, solve for the two amplitudes at every D1 with NNLS,
+# then fit each component's amplitude vs D1 independently. Reference =
+# longest D1 (best S/N, fully relaxed); no dead-time concern here unlike
 # relaxation_T2_components.py.
 #
-# CAUTION: a ~15-18% systematic residual trend at short D1 was traced to an
-# UNWEIGHTED fit (dominated by large-amplitude long-D1 points, starving the
-# short-D1 points where T1_fast lives) — fixed by sigma=y_in below. D1=0.1
-# (exp224) has no clean replacement and is left out.
+# Fit is sigma=y_in weighted -- an unweighted fit was dominated by the
+# large-amplitude long-D1 points and left ~15-18% residuals at short D1
+# where T1_fast lives. D1=0.1 (exp224) has no clean replacement, left out.
 #
-# narrow and broad come out with essentially the SAME T1_slow despite very
-# different T2 — expected, not a bug: T1 is driven by fluctuations near the
-# Larmor frequency and dominated by a few relaxation sinks, while spin
-# diffusion homogenizes T1 across sites on the (seconds) T1 timescale even
-# though it's too slow to do so on the (microsecond) T2 timescale.
+# narrow and broad give essentially the SAME T1_slow despite very
+# different T2 -- expected, not a bug: T1 is set by fluctuations near the
+# Larmor frequency and a few relaxation sinks; spin diffusion homogenizes
+# T1 across sites on the (seconds) timescale even though it's too slow to
+# do so on the (microsecond) T2 timescale.
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
@@ -56,13 +54,13 @@ DATASETS = {
 REFERENCE_D1 = 150  # longest D1 in DATASETS -> best S/N, fully relaxed, undistorted
 
 LB = 10
-PH0_MANUAL = -103.394
+PH0_MANUAL = 21
 PH1 = -49.524
-AUTO_PH0 = True
+AUTO_PH0 = False
 READ_PHASE_FROM_PROCS = False
 REFERENCE_SHIFT_PPM = 2
 ZF_FACTOR = 1
-OUTPUT_NAME = "T1_components_fit"
+OUTPUT_NAME = r"D:\Postdoc\Figures\T1_narrowbroad_MAS_298K"
 
 # Same convention as pipeline_1d.py's PEAKS / relaxation_T2_components.py's
 # REFERENCE_PEAKS. Copy your latest finalized numbers here before running.
@@ -122,8 +120,7 @@ def process_1d_spectrum(path, LB, ph0_manual, ph1, zf_factor,
     return delta, spectrum, dic, ph0_deg
 
 
-# NOTE: pseudo_voigt / sum_pseudo_voigt / fit_group are imported from
-# library_nmr.fitting above -- previously duplicated here, identical logic.
+# pseudo_voigt / sum_pseudo_voigt / fit_group are imported from library_nmr.fitting above.
 
 def fit_amplitudes_fixed_shape(delta, signal, ppm_min, ppm_max, components):
     """Solves for the component amplitudes ONLY, with position/width/eta
@@ -139,10 +136,12 @@ def fit_amplitudes_fixed_shape(delta, signal, ppm_min, ppm_max, components):
 
 
 def biexp_recovery(t, M0, f, T1a, T1b):
-    """M0 * (1 - f*exp(-t/T1a) - (1-f)*exp(-t/T1b)) -- same form as
-    relaxation_T1_onepulse_series.py."""
+    """M0 * (1 - f*exp(-t/T1a) - (1-f)*exp(-t/T1b))"""
     return M0 * (1 - f * np.exp(-t / T1a) - (1 - f) * np.exp(-t / T1b))
 
+def triexp_recovery(t, M0, f1, f2, T1a, T1b, T1c):
+    """M0 * (1 - f1*exp(-t/T1a) - f2*exp(-t/T1b) - (1-f1-f2)*exp(-t/T1c))"""
+    return M0 * (1 - f1 * np.exp(-t / T1a) - f2 * np.exp(-t / T1b) - (1 - f1 - f2) * np.exp(-t / T1c))
 
 if __name__ == "__main__":
     # === STEP 1: reference shape fit (best S/N = longest D1 = fully relaxed) ===
@@ -169,10 +168,8 @@ if __name__ == "__main__":
 
     # === STEP 2: fixed-shape amplitude fit on every spectrum of the series ===
     # NOTE: unlike relaxation_T2_components.py, phase is NOT frozen from a
-    # separate reference here -- AUTO_PH0 runs independently per D1 point,
-    # same as relaxation_T1_onepulse_series.py. If amplitudes look
-    # inconsistent, check PH0 per point first (see relaxation_T2_echo_series.py's
-    # note on why PH0 freezing mattered there).
+    # separate reference here -- AUTO_PH0 runs independently per D1 point.
+    # If amplitudes look inconsistent, check PH0 per point first.
     D1_list = []
     amp_series = [[] for _ in range(n_comp)]
 
@@ -198,32 +195,30 @@ if __name__ == "__main__":
 
     D1 = np.array(D1_list)
 
-    # === STEP 3: independent biexponential T1 fit per component ===
+    # === STEP 3: independent triexponential T1 fit per component ===
     fit_params = []  # {"popt": (...), "perr": (...)} per component, or None
     for i in range(n_comp):
         name = COMPONENT_NAMES[i]
         y = np.array(amp_series[i])
         usable = y > 0
-        if usable.sum() < 5:
-            # biexp_recovery has 4 free params — need >4 points for curve_fit to be well-posed.
-            print(f"\n{name}: only {usable.sum()} usable (>0) points — cannot fit, skipping.")
+        if usable.sum() < 7:
+            print(f"\n{name}: only {usable.sum()} usable (>0) points — cannot fit triexponential, skipping.")
             fit_params.append(None)
             continue
         t_in, y_in = D1[usable], y[usable]
-        p0 = [1.1 * y_in.max(), 0.05, 0.4, t_in[t_in > t_in.max() / 4].mean()]
-        bounds = ([0.5 * y_in.max(), 0, 0.01, 5], [5 * y_in.max(), 0.3, 5, 200])
+        p0 = [1.1 * y_in.max(), 0.03, 0.05, 0.02, 2, t_in[t_in > t_in.max() / 4].mean()]
+        bounds = ([0.5 * y_in.max(), 0, 0, 0.001, 0.1, 5], [5 * y_in.max(), 0.5, 0.5, 1, 20, 200])
         try:
-            # CAUTION: sigma=y_in required — same short-D1 weighting issue as
-            # relaxation_T1_onepulse_series.py (~15-18% residual trend otherwise).
-            popt, pcov = curve_fit(biexp_recovery, t_in, y_in, p0=p0, sigma=y_in, maxfev=50000, bounds=bounds)
+            popt, pcov = curve_fit(triexp_recovery, t_in, y_in, p0=p0, sigma=y_in, maxfev=50000, bounds=bounds)
             perr = np.sqrt(np.diag(pcov))
             fit_params.append({"popt": tuple(popt), "perr": tuple(perr)})
-            M0, f, T1fast, T1slow = popt
-            _, fe, T1faste, T1slowe = perr
-            print(f"\n{name}: T1_fast = {T1fast:.4f} +/- {T1faste:.4f} s  (fraction {f*100:.2f}%)  "
-                  f"T1_slow = {T1slow:.2f} +/- {T1slowe:.2f} s  (fraction {(1-f)*100:.2f}%)  "
-                  f"(fit on {usable.sum()}/{len(y)} points)")
-            rel_resid = 100 * (y_in - biexp_recovery(t_in, *popt)) / y_in
+            M0, f1, f2, T1a, T1b, T1c = popt
+            _, f1e, f2e, T1ae, T1be, T1ce = perr
+            f3 = 1 - f1 - f2
+            print(f"\n{name}: T1a={T1a:.4f}+/-{T1ae:.4f}s ({f1 * 100:.2f}%), "
+                  f"T1b={T1b:.3f}+/-{T1be:.3f}s ({f2 * 100:.2f}%), "
+                  f"T1c={T1c:.2f}+/-{T1ce:.2f}s ({f3 * 100:.2f}%)  (fit on {usable.sum()}/{len(y)} points)")
+            rel_resid = 100 * (y_in - triexp_recovery(t_in, *popt)) / y_in
             print(f"  relative residuals (%): {np.round(rel_resid, 2)}")
             if np.any(np.abs(rel_resid) > 20):
                 print("  WARNING: some points have >20% residual — check phasing/S-N on those spectra.")
@@ -250,12 +245,14 @@ if __name__ == "__main__":
                    edgecolor="black", linewidth=0.4, label=f"{name} — data")
         if fit_params[i] is not None:
             popt, perr = fit_params[i]["popt"], fit_params[i]["perr"]
-            M0, f, T1fast, T1slow = popt
-            _, _, T1faste, T1slowe = perr
-            ax.plot(t_fit, biexp_recovery(t_fit, *popt), color=COMPONENT_COLORS[i], lw=1.8, zorder=2,
-                    label=f"{name} — biexponential fit")
-            textlines.append(f"{name}: T1_fast={T1fast:.3f}±{T1faste:.3f}s ({f*100:.1f}%), "
-                              f"T1_slow={T1slow:.1f}±{T1slowe:.1f}s ({(1-f)*100:.1f}%)")
+            M0, f1, f2, T1a, T1b, T1c = popt
+            _, _, _, T1ae, T1be, T1ce = perr
+            f3 = 1 - f1 - f2
+            ax.plot(t_fit, triexp_recovery(t_fit, *popt), color=COMPONENT_COLORS[i], lw=1.8, zorder=2,
+                    label=f"{name} — triexponential fit")
+            textlines.append(f"{name}: T1c={T1c:.1f}±{T1ce:.1f}s ({f3 * 100:.1f}%), "
+                             f"T1b={T1b:.2f}±{T1be:.2f}s ({f2 * 100:.1f}%), "
+                             f"T1a={T1a:.3f}±{T1ae:.3f}s ({f1 * 100:.1f}%)")
 
     ax.set_xscale("log")
     ax.set_xlabel("Recovery delay D1 (s)")
@@ -279,11 +276,17 @@ if __name__ == "__main__":
         y = np.array(amp_series[i])
         usable = y > 0
         agr_series.append(dict(x=D1[usable], y=y[usable], mode="symbol",
-                                color=COMPONENT_COLORS[i], legend=f"{name} — data"))
+                               color=COMPONENT_COLORS[i], legend=f"{name} — data"))
         if fit_params[i] is not None:
-            popt = fit_params[i]["popt"]
-            agr_series.append(dict(x=t_fit, y=biexp_recovery(t_fit, *popt), mode="line",
-                                    color=COMPONENT_COLORS[i], legend=f"{name} — fit"))
+            popt, perr = fit_params[i]["popt"], fit_params[i]["perr"]
+            M0, f1, f2, T1a, T1b, T1c = popt
+            _, _, _, T1ae, T1be, T1ce = perr
+            f3 = 1 - f1 - f2
+            fit_legend = (f"{name} fit: T1c={T1c:.1f}+/-{T1ce:.1f}s ({f3 * 100:.1f}%), "
+                          f"T1b={T1b:.2f}+/-{T1be:.2f}s ({f2 * 100:.1f}%), "
+                          f"T1a={T1a:.3f}+/-{T1ae:.3f}s ({f1 * 100:.1f}%)")
+            agr_series.append(dict(x=t_fit, y=triexp_recovery(t_fit, *popt), mode="line",
+                                   color=COMPONENT_COLORS[i], legend=fit_legend))
     export_agr(f"{OUTPUT_NAME}.agr", agr_series,
                xlabel="Recovery delay D1 (s)", ylabel="Component amplitude (a.u.)",
                xlog=True, title="7Li T1 per component (fixed shape, NNLS amplitudes)")

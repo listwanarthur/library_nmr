@@ -1,0 +1,322 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import nmrglue as ng
+from scipy.optimize import curve_fit
+
+from library_nmr.core import find_grpdly_shift, process_row, find_best_ph0
+from library_nmr.agr_export import export_agr
+
+# ============================================================
+# T2_global_statique_360K -- deuxieme palier VT (27/08), copie de
+# T2_recovery_static_330K.py (meme physique, D1=15s >> tout decho utilise).
+#
+# Grille fine (exp619-628+637-640) : L0=2,3,4,5,6,8,9,11,13,16,19,22,32,45
+# (decho=20-450us), NS=64, DS=10, D1=15s. Rattrapage plateau (exp629-632) :
+# L0=64,90,128,180. Plateau plus loin, boost NS=220 (exp633/634) :
+# L0=256,400. Cross-check NS=64 aux memes L0 (exp641/642).
+# (exp635/636 sont des manips T1, cf. T1_recovery_static_360K.py.)
+#
+# Point cle (mode magnitude) : le plancher de bruit est ADDITIF au signal
+# reel, pas une extrapolation vers zero. Le cross-check NS=64 vs NS=220 a
+# L0=256/400 met en evidence un ecart net (NS=64 nettement au-dessus de
+# NS=220, signe oppose et bien plus grand que celui vu au T1 du meme
+# palier -- voir T1_recovery_static_360K.py), coherent avec la prediction
+# theorique sqrt(220/64)-1 pour un plancher de bruit pur (moyenne
+# ~1/sqrt(NS)). Ca explique aussi le T2_slow fantome (non
+# contraint, incertitude 30-170x la valeur) qu'un fit biexponentiel
+# donnait auparavant sur cette zone : on essayait de faire passer une
+# exponentielle lente a travers du bruit, pas un vrai second temps de
+# relaxation.
+#
+# DECISION : fit MONO-exponentiel restreint a la region signal reel
+# (L0 <= 22, ~20-220us). Tous les points L0 > 22 (deja indiscernables les
+# uns des autres -- voir NOISE_FLOOR_L0 plus bas), PLATEAU_CHECK et
+# NS_CROSSCHECK restent affiches pour reference mais hors fit.
+# ============================================================
+
+# === CONFIGURATION -- only section to edit ===
+# L0: (path, NS) -- decho = L0*10us (echosolid_p2.al; conversion cablee
+# dans le programme d'impulsion, pas stockee comme parametre D/IN).
+DATASETS = {
+    2:   (r"D:\Postdoc\Datas\LLZO-400-aug26\619", 64),
+    3:   (r"D:\Postdoc\Datas\LLZO-400-aug26\620", 64),
+    4:   (r"D:\Postdoc\Datas\LLZO-400-aug26\621", 64),
+    5:   (r"D:\Postdoc\Datas\LLZO-400-aug26\637", 64),
+    6:   (r"D:\Postdoc\Datas\LLZO-400-aug26\622", 64),
+    8:   (r"D:\Postdoc\Datas\LLZO-400-aug26\623", 64),
+    9:   (r"D:\Postdoc\Datas\LLZO-400-aug26\638", 64),
+    11:  (r"D:\Postdoc\Datas\LLZO-400-aug26\624", 64),
+    13:  (r"D:\Postdoc\Datas\LLZO-400-aug26\639", 64),
+    16:  (r"D:\Postdoc\Datas\LLZO-400-aug26\625", 64),
+    19:  (r"D:\Postdoc\Datas\LLZO-400-aug26\640", 64),
+    22:  (r"D:\Postdoc\Datas\LLZO-400-aug26\626", 64),
+    32:  (r"D:\Postdoc\Datas\LLZO-400-aug26\627", 64),
+    45:  (r"D:\Postdoc\Datas\LLZO-400-aug26\628", 64),
+    64:  (r"D:\Postdoc\Datas\LLZO-400-aug26\629", 64),
+    90:  (r"D:\Postdoc\Datas\LLZO-400-aug26\630", 64),
+    128: (r"D:\Postdoc\Datas\LLZO-400-aug26\631", 64),
+    180: (r"D:\Postdoc\Datas\LLZO-400-aug26\632", 64),
+}
+
+# Indiscernables du plancher de bruit (cf. diagnostic ci-dessus) -- gardes
+# dans DATASETS pour affichage/audit, exclus du fit INDEPENDAMMENT du
+# controle ppm (certains passent le controle ppm -- ex. L0=45 -- mais
+# restent du bruit d'apres le cross-check NS).
+NOISE_FLOOR_L0 = {32, 45, 64, 90, 128, 180}
+
+# Points de verification plateau bruit, plus loin -- traces/imprimes a
+# part, PAS dans le fit. NS=220 (boost, comme au 330K).
+PLATEAU_CHECK = {
+    256: (r"D:\Postdoc\Datas\LLZO-400-aug26\633", 220),
+    400: (r"D:\Postdoc\Datas\LLZO-400-aug26\634", 220),
+}
+
+# Cross-check NS -- memes L0 que PLATEAU_CHECK, NS=64 au lieu de 220 (cf.
+# diagnostic plancher de bruit en tete de fichier).
+NS_CROSSCHECK = {
+    256: (r"D:\Postdoc\Datas\LLZO-400-aug26\641", 64),
+    400: (r"D:\Postdoc\Datas\LLZO-400-aug26\642", 64),
+}
+
+LB = 10
+PH0_MANUAL = 0.0       # irrelevant en mode magnitude
+PH1 = 0.0              # irrelevant en mode magnitude
+AUTO_PH0 = False
+READ_PHASE_FROM_PROCS = False
+REFERENCE_SHIFT_PPM = 2
+ZF_FACTOR = 1
+PEAK_PPM_WINDOW = (-10, 15)
+PPM_OUTLIER_THRESHOLD = 5.0
+FORCE_INCLUDE_L0 = []   # a completer si un point echoue le controle ppm
+                         # mais que l'intensite reste coherente avec ses
+                         # voisins (raie large/plate, meme mecanisme qu'a 330K).
+OUTPUT_NAME = r"D:\Postdoc\Figures\T2_global_statique_360K_provisoire"
+# ================================================
+
+
+def process_1d_spectrum(path, LB, ph0_manual, ph1, zf_factor,
+                         auto_ph0=False, read_phase_from_procs=False, reference_shift_ppm=0.0):
+    dic, data = ng.bruker.read(path, read_procs=read_phase_from_procs)
+
+    grpdly_shift = find_grpdly_shift(dic)
+    if grpdly_shift > 0:
+        print(f"  GRPDLY corrected: shifted by {grpdly_shift} points")
+    else:
+        print("  GRPDLY not found or zero — no correction applied")
+
+    N = data.shape[0]
+    dt = 1 / dic["acqus"]["SW_h"]
+    data_zf = np.concatenate([data, np.zeros(zf_factor * N, dtype=complex)])
+
+    ph0_deg = ph0_manual
+    ph1_deg = ph1
+    if read_phase_from_procs:
+        try:
+            ph0_deg = dic["procs"]["PHC0"]
+            ph1_deg = dic["procs"]["PHC1"]
+        except Exception:
+            print("  Could not read phase from procs — using manual/auto value instead")
+    elif auto_ph0:
+        signal_search = process_row(data_zf, dt, LB, 0.0, np.deg2rad(ph1_deg), grpdly_shift=0)
+        ph0_deg = find_best_ph0(signal_search, np.deg2rad(ph1_deg))
+
+    spectrum = process_row(data_zf, dt, LB, np.deg2rad(ph0_deg), np.deg2rad(ph1_deg), grpdly_shift)
+
+    f = np.fft.fftshift(np.fft.fftfreq(len(data_zf), dt))
+    delta = (dic["acqus"]["O1"] - f) / dic["acqus"]["SFO1"]
+    delta = delta + reference_shift_ppm
+
+    te = dic["acqus"].get("TE", None)
+    if te is not None:
+        print(f"  TE = {te:.2f} K")
+
+    rg = dic["acqus"].get("RG", None)
+    return delta, spectrum, dic, ph0_deg, rg
+
+
+def get_peak_intensity_magnitude(delta, spectrum, ppm_window):
+    lo, hi = sorted(ppm_window)
+    mask = (delta >= lo) & (delta <= hi)
+    window = np.abs(spectrum[mask])
+    idx = int(np.argmax(window))
+    return float(window[idx]), float(delta[mask][idx])
+
+
+def monoexp_decay(t, M0, T2):
+    return M0 * np.exp(-t / T2)
+
+
+def get_intensity(path):
+    delta, spectrum, dic, _, rg = process_1d_spectrum(
+        path, LB, PH0_MANUAL, PH1, ZF_FACTOR,
+        auto_ph0=AUTO_PH0, read_phase_from_procs=READ_PHASE_FROM_PROCS,
+        reference_shift_ppm=REFERENCE_SHIFT_PPM,
+    )
+    intensity, peak_ppm = get_peak_intensity_magnitude(delta, spectrum, PEAK_PPM_WINDOW)
+    return intensity, peak_ppm, rg
+
+
+if __name__ == "__main__":
+    # === STEP 1: process the fine grid, normalize by NS, sanity-check peak position/RG ===
+    print("=== T2 series (static probe, 360K palier, grille fine) ===")
+    records = []  # (L0, decho_us, intensity_per_scan, peak_ppm, rg)
+    for l0, (path, ns) in sorted(DATASETS.items()):
+        intensity, peak_ppm, rg = get_intensity(path)
+        intensity_per_scan = intensity / ns
+        decho_us = l0 * 10
+        print(f"  L0={l0:>4}  decho={decho_us:>4}us  NS={ns:>4}  RG={rg}  peak at {peak_ppm:7.2f} ppm"
+              f"  raw={intensity:.4e}  per-scan={intensity_per_scan:.4e}")
+        records.append((l0, decho_us, intensity_per_scan, peak_ppm, rg))
+
+    rg_values = set(r[4] for r in records)
+    if len(rg_values) > 1:
+        print(f"\n  WARNING: RG is not constant across the series ({rg_values}) -- "
+              f"cross-calibration needed before comparing amplitudes.")
+    else:
+        print(f"\n  RG constant across the series ({rg_values.pop()}) -- no cross-calibration needed.")
+
+    all_ppm = [r[3] for r in records if r[0] not in NOISE_FLOOR_L0]
+    median_ppm = float(np.median(all_ppm))
+    is_ppm_outlier = lambda r: abs(r[3] - median_ppm) > PPM_OUTLIER_THRESHOLD and r[0] not in FORCE_INCLUDE_L0
+    is_noise_floor = lambda r: r[0] in NOISE_FLOOR_L0
+
+    ppm_bad = [r for r in records if is_ppm_outlier(r) and not is_noise_floor(r)]
+    floor_excl = [r for r in records if is_noise_floor(r)]
+    good = [r for r in records if not is_ppm_outlier(r) and not is_noise_floor(r)]
+
+    if ppm_bad:
+        print(f"\n  EXCLUDING {len(ppm_bad)} point(s) from the fit -- peak far from the median"
+              f" ({median_ppm:.2f} ppm), likely mispicked noise:")
+        for l0, decho_us, _, ppm, _ in ppm_bad:
+            print(f"    L0={l0} (decho={decho_us}us): peak at {ppm:.2f} ppm"
+                  f" ({abs(ppm-median_ppm):.1f} ppm from median) -- EXCLUDED (ppm)")
+
+    print(f"\n  EXCLUDING {len(floor_excl)} point(s) from the fit -- indistinguishable from the"
+          f" magnitude noise floor (see NS cross-check diagnostic in the header, NS=64 vs"
+          f" NS=220 at the same L0 -- not real decaying signal):")
+    for l0, decho_us, i_ps, ppm, _ in sorted(floor_excl):
+        print(f"    L0={l0} (decho={decho_us}us): per-scan={i_ps:.4e} ppm={ppm:.2f} -- EXCLUDED (floor)")
+
+    decho_s = np.array([r[1] * 1e-6 for r in good])   # decho in seconds for the fit
+    L0_arr = np.array([r[0] for r in good])
+    I = np.array([r[2] for r in good])
+    print(f"\n  Fitting with {len(I)}/{len(records)} points from the fine grid"
+          f" (signal-only region, L0 <= {max(L0_arr)}).")
+
+    diffs = np.diff(I)
+    if np.any(diffs > 0):
+        rises = [(L0_arr[i], L0_arr[i+1]) for i in range(len(diffs)) if diffs[i] > 0]
+        print(f"\n  WARNING: intensity increases somewhere between these consecutive L0 pairs: {rises}"
+              f" -- physically shouldn't happen for a decay curve, worth a second look.")
+    else:
+        print("\n  Intensity is monotonically non-increasing with decho -- consistent with a clean decay curve.")
+
+    # === STEP 2: plateau-bruit check (printed/plotted only, NOT fitted) ===
+    print("\n--- Vérification plateau bruit, plus loin (hors fit) ---")
+    plateau_records = []
+    for l0, (path, ns) in sorted(PLATEAU_CHECK.items()):
+        intensity, peak_ppm, rg = get_intensity(path)
+        intensity_per_scan = intensity / ns
+        decho_us = l0 * 10
+        print(f"  L0={l0:>4}  decho={decho_us/1000:.2f}ms  NS={ns:>4}  RG={rg}  peak at {peak_ppm:7.2f} ppm"
+              f"  per-scan={intensity_per_scan:.4e}")
+        plateau_records.append((l0, decho_us, intensity_per_scan, peak_ppm))
+
+    # === STEP 2.5: NS cross-check (meme L0, NS different) ===
+    print("\n--- NS cross-check (meme L0, NS different) ---")
+    plateau_by_l0 = {r[0]: r for r in plateau_records}
+    ns_crosscheck_records = []
+    for l0_check, (path, ns_check) in sorted(NS_CROSSCHECK.items()):
+        intensity, peak_ppm, rg = get_intensity(path)
+        intensity_per_scan = intensity / ns_check
+        decho_us = l0_check * 10
+        ns_crosscheck_records.append((l0_check, decho_us, intensity_per_scan, peak_ppm))
+        ref = plateau_by_l0.get(l0_check)
+        print(f"  L0={l0_check:>4}  NS={ns_check:>4}  peak at {peak_ppm:7.2f} ppm"
+              f"  per-scan={intensity_per_scan:.4e}")
+        if ref is not None:
+            ref_per_scan = ref[2]
+            rel_diff = 100 * (intensity_per_scan - ref_per_scan) / ref_per_scan
+            print(f"    vs L0={l0_check} NS={PLATEAU_CHECK[l0_check][1]} deja dans PLATEAU_CHECK "
+                  f"(per-scan={ref_per_scan:.4e}) : ecart = {rel_diff:+.1f}%")
+        else:
+            print(f"    (pas de point de reference trouve dans PLATEAU_CHECK pour L0={l0_check})")
+    print(
+        "  Diagnostic retenu (27/08) : cet ecart (NS=64 > NS=220), de signe oppose et bien\n"
+        "  plus grand que celui vu au T1 (voir T1_recovery_static_360K.py), est la signature d'un plancher de\n"
+        "  bruit magnitude (moyenne ~1/sqrt(NS), pas d'un vrai signal qui decroit -- voir le\n"
+        "  commentaire en tete de fichier). Ces points, comme L0>22 dans la grille fine, sont\n"
+        "  donc traites comme du bruit, pas comme une composante T2 lente reelle."
+    )
+
+    # === STEP 3: fit -- MONOexponential decay, signal-only region (L0 <= 22) ===
+    print("\n--- Monoexponential decay fit (sigma=I weighted, region signal uniquement) ---")
+    p0 = [1.1 * I.max(), 1e-4]
+    bounds = ([0.5 * I.max(), 1e-6], [5 * I.max(), 1e-2])
+    popt, pcov = curve_fit(monoexp_decay, decho_s, I, p0=p0, sigma=I, maxfev=50000, bounds=bounds)
+    perr = np.sqrt(np.diag(pcov))
+    M0, T2 = popt
+    print(f"  T2 = {T2*1e6:.3g} +/- {perr[1]*1e6:.2g} us")
+
+    print("\n--- Robustness (leave-one-out on the shortest/longest points) ---")
+    for label, mask in [("tous", np.ones_like(L0_arr, dtype=bool)),
+                         ("sans le point le plus court", L0_arr != L0_arr.min()),
+                         ("sans le point le plus long", L0_arr != L0_arr.max())]:
+        try:
+            popt_i, pcov_i = curve_fit(monoexp_decay, decho_s[mask], I[mask], p0=p0, sigma=I[mask],
+                                        maxfev=50000, bounds=bounds)
+            print(f"  {label:<28} T2={popt_i[1]*1e6:.3g}us")
+        except RuntimeError:
+            print(f"  {label:<28} fit failed")
+
+    resid = 100 * (I - monoexp_decay(decho_s, *popt)) / I
+    print("\nMonoexponential relative residuals (%):", np.round(resid, 2))
+
+    # === STEP 4: export ===
+    df = pd.DataFrame({"L0": L0_arr, "decho_us": L0_arr * 10, "Intensity_per_scan": I})
+    df.to_csv(f"{OUTPUT_NAME}.csv", index=False)
+    print(f"\nResults exported to {OUTPUT_NAME}.csv")
+
+    t_fit = np.logspace(np.log10(decho_s.min() / 2), np.log10(decho_s.max() * 1.3), 400)
+    y_fit = monoexp_decay(t_fit, *popt)
+    fit_legend = f"monoexp fit: T2={T2*1e6:.1f}+/-{perr[1]*1e6:.1f}us (signal region only, L0<=22)"
+
+    fig, ax = plt.subplots(figsize=(8, 5.5))
+    ax.scatter(decho_s * 1e6, I, color="blue", s=55, zorder=3, label="data (fit region, L0<=22)")
+    ax.plot(t_fit * 1e6, y_fit, color="red", lw=1.5, zorder=2, label="monoexponential fit")
+    # Points hors fit regroupes sur un seul marqueur (grille L0>22 + plateau + cross-check).
+    floor_x, floor_y = [], []
+    for l0, decho_us, i_ps, ppm, _ in floor_excl:
+        floor_x.append(decho_us); floor_y.append(i_ps)
+    for l0, decho_us, i_ps, ppm in plateau_records:
+        floor_x.append(decho_us); floor_y.append(i_ps)
+    for l0, decho_us, i_ps, ppm in ns_crosscheck_records:
+        floor_x.append(decho_us); floor_y.append(i_ps)
+    if floor_x:
+        ax.scatter(floor_x, floor_y, color="gray", marker="x", s=60, zorder=3,
+                   label="plancher de bruit (hors fit, voir diagnostic NS)")
+    ax.set_xscale("log")
+    ax.set_xlabel("Echo delay decho (us)")
+    ax.set_ylabel("Intensity per scan (a.u., magnitude)")
+    ax.set_title(r"$^7$Li T$_2$ decay — static probe, 360K")
+    ax.text(0.97, 0.95, fit_legend, transform=ax.transAxes, fontsize=9,
+            va="top", ha="right",
+            bbox=dict(boxstyle="round", facecolor="white", edgecolor="gray", alpha=0.9))
+    ax.legend(loc="lower left", frameon=False, fontsize=8)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    plt.savefig(f"{OUTPUT_NAME}.pdf")
+    plt.show()
+
+    agr_series = [
+        dict(x=decho_s * 1e6, y=I, mode="symbol", color="blue", legend="data (fit region)"),
+        dict(x=t_fit * 1e6, y=y_fit, mode="line", color="red", legend=fit_legend),
+    ]
+    export_agr(f"{OUTPUT_NAME}.agr", agr_series,
+               xlabel="Echo delay decho (us)", ylabel="Intensity per scan (a.u.)",
+               xlog=True, title="7Li T2 decay -- static probe, 360K")
+
+    # export_agr() n'inclut pas les points hors fit -- a ajouter manuellement
+    # dans Xmgrace si besoin de les montrer aussi sur le .agr.
+    print(f"\nDone. Figure saved as {OUTPUT_NAME}.pdf / .agr")

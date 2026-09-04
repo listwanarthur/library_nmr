@@ -103,6 +103,55 @@ def _axis_range(values, log=False, pad=0.05):
     return lo - pad * span, hi + pad * span
 
 
+def _nice_step(span, target_ticks=6):
+    """Round span/target_ticks to a 'nice' 1/2/5x10^n step, for a pleasant
+    linear-axis tick spacing (avoids the autotick failure described below)."""
+    if span <= 0:
+        return 1.0
+    raw = span / target_ticks
+    exp = np.floor(np.log10(raw))
+    frac = raw / (10 ** exp)
+    if frac < 1.5:
+        nice = 1
+    elif frac < 3.5:
+        nice = 2
+    elif frac < 7.5:
+        nice = 5
+    else:
+        nice = 10
+    return float(nice * (10 ** exp))
+
+
+def _tick_lines(prefix, lo, hi, log):
+    """Explicit tick-mark spacing for one axis.
+
+    FIX (26/08): this function used to not exist at all -- Grace was left to
+    compute tick spacing from scratch every time a .agr was opened. Grace's
+    own default template always writes an explicit spacing (see
+    /usr/share/grace/templates/Default.agr); without it, the from-scratch
+    autotick computation can fail on an unusual range -- e.g. a log axis
+    spanning many decades, or a linear axis with a non-round min/max --
+    producing "Invalid major tick spacing" / "Too many ticks ( > MAX_TICKS )"
+    and a silently truncated render (confirmed directly with Grace: same
+    truncation in both PNG and EPS output, so it's a real computation
+    failure, not just a raster-size quirk). Found on a T1 recovery plot
+    spanning D1=0.02-400s (5 decades); root-caused and fixed by always
+    writing explicit ticks here instead of relying on autotick.
+    """
+    if log:
+        major = 10  # Grace convention: one major tick per decade
+        minor = 8   # minor ticks at 2..9 within each decade
+    else:
+        major = _nice_step(hi - lo)
+        minor = 4
+    return [
+        f"@    {prefix}  tick on",
+        f"@    {prefix}  tick major {major:g}",
+        f"@    {prefix}  tick minor ticks {minor}",
+        f"@    {prefix}  tick default 6",
+    ]
+
+
 def export_agr(path, series, xlabel, ylabel, title="", xlog=False, ylog=False,
                 invert_x=False, invert_y=False, legend=True,
                 legend_pos=(0.78, 0.85), world=None, xlim=None):
@@ -142,6 +191,8 @@ def export_agr(path, series, xlabel, ylabel, title="", xlog=False, ylog=False,
     w.append("@    yaxis  label char size 1.100000")
     w.append("@    xaxis  ticklabel char size 1.000000")
     w.append("@    yaxis  ticklabel char size 1.000000")
+    w += _tick_lines("xaxis", xmin, xmax, xlog)
+    w += _tick_lines("yaxis", ymin, ymax, ylog)
     w.append(f"@    legend {'on' if legend else 'off'}")
     w.append(f"@    legend {legend_pos[0]:.3f}, {legend_pos[1]:.3f}")
     w.append("@    legend box linestyle 0")

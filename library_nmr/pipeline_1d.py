@@ -13,11 +13,11 @@ from library_nmr.agr_export import export_agr
 # ============================================================
 
 # === CONFIGURATION — only section to edit ===
-PATH = r"D:\Postdoc\Datas\LLZO-400-aug26\202"  # Bruker experiment folder
-LB = 10  # line broadening in Hz (10-200 Hz typical for solids)
-PH0_MANUAL = -103.394  # PHC0 in degrees, used only if AUTO_PH0 = False
-PH1 = -49.524  # PHC1 in degrees (first-order phase correction)
-AUTO_PH0 = True  # True: automatic PH0 search by maximizing the real part
+PATH = r"D:\Postdoc\Datas\LLZO-400-aug26\236"  # exp236 = meme reference que tout le reste aujourd'hui
+LB = 10
+PH0_MANUAL = 21  # affine visuellement ce matin sur ce meme spectre
+PH1 = -49.524
+AUTO_PH0 = False
 READ_PHASE_FROM_PROCS = False  # True: read ph0/ph1 from TopSpin (procs) instead
 REFERENCE_SHIFT_PPM = 2  # additive ppm-axis shift = literature_position - measured_position
 ZF_FACTOR = 1  # zero-filling multiplier: total FFT length = N*(1+ZF_FACTOR)
@@ -37,14 +37,14 @@ PEAKS = [
         "position_bounds": [(-4, 5), (-4, 5)],
     },
 ]
-BASELINE_CORRECTION = False  # set True if the baseline is poor
-BASELINE_REGIONS = [(-500, -100), (200, 500)]  # signal-free regions in ppm
+BASELINE_CORRECTION = False  # degre 3, deja le POLYNOMIAL_DEGREE par defaut
+BASELINE_REGIONS = [(-150, -50), (50, 150)]  # signal-free regions in ppm, rapproches du pic (axe va jusqu'a +/-400, signal contenu dans +/-30)
 BASELINE_METHOD = "polynomial"  # "polynomial" or "spline"
 POLYNOMIAL_DEGREE = 3
 SPLINE_SMOOTHING = 1e18
 DISPLAY_ONLY = False  # set True to just display the spectrum without fitting
 ZOOM = (30, -30)
-OUTPUT_NAME = "results"
+OUTPUT_NAME = r"D:\Postdoc\Figures\Spectre_narrowbroad_MAS_298K"
 
 # Robustness check: re-fits the same group varying only one component's eta,
 # to compare residuals across hypotheses. Set to None to disable.
@@ -106,14 +106,19 @@ def export(results, base_name, delta, signal, percentages=None, zoom=None):
                         if k not in ["popt", "delta_peak", "signal_peak"]} for r in results])
     df.to_csv(f"{base_name}.csv", index=False)
 
+    # Courbes evaluees sur toute la plage affichee (zoom), pas seulement sur
+    # la fenetre de fit -- sinon la traine du composant broad est coupee net
+    # au bord au lieu de redescendre vers zero.
+    plot_range = zoom if zoom is not None else (delta.min(), delta.max())
+    x_curve = np.linspace(min(plot_range), max(plot_range), 2000)
+
     colors = ["red", "green", "orange", "purple"]
     fig, axes = plt.subplots(figsize=(10, 5))
     axes.plot(delta, signal, color="blue", linewidth=1, label="spectrum")
     for i, r in enumerate(results):
-        axes.plot(r["delta_peak"], pseudo_voigt(r["delta_peak"], *r["popt"]),
+        axes.plot(x_curve, pseudo_voigt(x_curve, *r["popt"]),
                         color=colors[i % len(colors)], linewidth=1.5,
                         label=f"fit {i+1} ({percentages[i]:.1f}%)" if percentages else f"fit {i+1}")
-
     axes.invert_xaxis()
     axes.spines["top"].set_visible(False)
     axes.spines["right"].set_visible(False)
@@ -128,7 +133,7 @@ def export(results, base_name, delta, signal, percentages=None, zoom=None):
     agr_series = [dict(x=delta, y=signal, mode="line", color="blue", legend="spectrum")]
     for i, r in enumerate(results):
         agr_series.append(dict(
-            x=r["delta_peak"], y=pseudo_voigt(r["delta_peak"], *r["popt"]),
+            x=x_curve, y=pseudo_voigt(x_curve, *r["popt"]),
             mode="line", color=colors[i % len(colors)],
             legend=f"fit {i+1} ({percentages[i]:.1f}%)" if percentages else f"fit {i+1}",
         ))
@@ -136,12 +141,12 @@ def export(results, base_name, delta, signal, percentages=None, zoom=None):
                xlabel="Chemical shift (ppm)", ylabel="Intensity (a.u.)",
                invert_x=True, xlim=zoom)
 
-
 # === PROCESSING ===
 delta, spectrum, bruker_dic = process_1d_spectrum(
     PATH, LB, PH0_MANUAL, PH1, ZF_FACTOR,
     auto_ph0=AUTO_PH0, read_phase_from_procs=READ_PHASE_FROM_PROCS, reference_shift_ppm=REFERENCE_SHIFT_PPM
 )
+print(f"Etendue de l'axe ppm : {delta.min():.1f} a {delta.max():.1f}")
 SFO1 = bruker_dic["acqus"]["SFO1"]  # MHz — used to convert widths from ppm to Hz
 signal = spectrum.real  # real part: phased absorptive spectrum
 
