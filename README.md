@@ -68,6 +68,7 @@ than to hide behind a generic config.
 | `T1_recovery_330K_v2.py` | 330K T1 redone as one continuous 21-point session after a probe remount, D1 extended to 500s to fully close the recovery plateau |
 | `T1_recovery_static_345K.py` | T1 at 345K, same biexp/triexp pipeline as 315K, D1 grid extended to 400/500s from the start (plateau-closing lesson applied up front) |
 | `T1_recovery_static_360K.py` | T1 at 360K, NS boosted on the shortest D1 points to fix an SNR/mispick issue first seen at 330K |
+| `T1_recovery_static_4mm_nospin_298K.py` | T1 at 298K, 4mm MAS probe with the rotor stopped rather than the usual 7mm static probe — isolates the spin/no-spin variable from a probe-to-probe difference, to test whether the static/MAS T1_slow discrepancy seen elsewhere is a probe artifact rather than a real physical effect |
 | `T1_comparaison_VT.py` / `T1_comparaison_VT_v2.py` | Overlay T1(D1) recovery curves across all temperatures from the already-exported per-temperature CSVs (v2 unifies the x-axis on D1+AQ throughout, including in the fit itself, not just the display) |
 | `T2_recovery_static_298K.py` | T2 at 298K, fine echo-delay grid with dedicated noise-floor cross-checks (`PLATEAU_CHECK`, `NS_CROSSCHECK`) |
 | `T2_recovery_static_315K.py` | T2 at 315K (sep26 campaign), grid extended further to directly verify the noise-floor threshold established at other temperatures |
@@ -245,6 +246,7 @@ library_nmr/                             (repo root)
 │   ├── T1_global_statique_298K_peakwindow_test.py
 │   ├── T1_recovery_static_298K.py           # + _298K_RG94_only, _315K, _330K, _345K, _360K
 │   ├── T1_recovery_330K_v2.py
+│   ├── T1_recovery_static_4mm_nospin_298K.py
 │   └── T2_recovery_static_298K.py           # + _315K, _330K, _345K, _360K
 ├── tests/                                (unit tests, pytest)
 │   ├── __init__.py

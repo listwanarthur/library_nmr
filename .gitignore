@@ -5,6 +5,11 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 
+# Editor backup copies (e.g. foo.py.bak_before_yerr) — scratch snapshots
+# taken before a risky edit, never meant to be versioned
+*.bak
+*.bak_*
+
 # Jupyter
 .ipynb_checkpoints/
 

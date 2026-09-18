@@ -13,6 +13,8 @@ Usage
             dict(x=delta, y=signal, mode="line", color="blue", legend="spectrum"),
             dict(x=r["delta_peak"], y=fit_curve, mode="line", color="red",
                  legend="fit 1 (41.3%)"),
+            dict(x=T, y=T1_slow, yerr=T1_slow_err, mode="symbol", color="red",
+                 legend="T1_slow (s)"),
         ],
         xlabel="Chemical shift (ppm)",
         ylabel="Intensity (a.u.)",
@@ -21,6 +23,9 @@ Usage
 
 Each entry in `series` mirrors one matplotlib ax.plot()/ax.scatter() call:
     x, y     : 1D arrays (required)
+    yerr     : optional 1D array of symmetric y error bars (matches
+               matplotlib's ax.errorbar(yerr=...)) -- writes an "xydy" Grace
+               dataset with error bars enabled instead of plain "xy".
     mode     : "line" (default) or "symbol" (markers, no connecting line)
     color    : matplotlib-style color name — mapped to a Grace color index
     legend   : legend text (omit for no legend entry)
@@ -162,12 +167,26 @@ def export_agr(path, series, xlabel, ylabel, title="", xlog=False, ylog=False,
     xlim: optional (xmin, xmax) view-only override (mirrors ax.set_xlim) —
     the y-range is still auto-computed from the full data, not just the
     zoomed window. Ignored if `world` is given.
+
+    A series with a "yerr" entry gets an automatic y-range pad that
+    includes the error bar extent (y +/- yerr), so caps aren't clipped at
+    the plot edge -- this only applies when `world` is not given.
     """
     all_x = np.concatenate([np.asarray(s["x"], dtype=float) for s in series])
-    all_y = np.concatenate([np.asarray(s["y"], dtype=float) for s in series])
     if world is None:
+        y_extent_parts = []
+        for s in series:
+            y_arr = np.asarray(s["y"], dtype=float)
+            yerr = s.get("yerr")
+            if yerr is not None:
+                yerr_arr = np.asarray(yerr, dtype=float)
+                y_extent_parts.append(y_arr + yerr_arr)
+                y_extent_parts.append(y_arr - yerr_arr)
+            else:
+                y_extent_parts.append(y_arr)
+        all_y_extent = np.concatenate(y_extent_parts)
         xmin, xmax = _axis_range(all_x, log=xlog)
-        ymin, ymax = _axis_range(all_y, log=ylog)
+        ymin, ymax = _axis_range(all_y_extent, log=ylog)
         if xlim is not None:
             xmin, xmax = min(xlim), max(xlim)
     else:
@@ -203,6 +222,7 @@ def export_agr(path, series, xlabel, ylabel, title="", xlog=False, ylog=False,
         mode = s.get("mode", "line")
         lw = s.get("linewidth", 2.0)
         symsize = s.get("symsize", 0.6)
+        has_err = s.get("yerr") is not None
         w.append(f"@    s{i} hidden false")
         w.append(f"@    s{i} line color {color}")
         w.append(f"@    s{i} symbol color {color}")
@@ -217,6 +237,17 @@ def export_agr(path, series, xlabel, ylabel, title="", xlog=False, ylog=False,
             w.append(f"@    s{i} symbol 0")
             w.append(f"@    s{i} line type 1")
             w.append(f"@    s{i} line linewidth {lw}")
+        if has_err:
+            errbar_lw = 1.2 if mode == "symbol" else lw
+            w.append(f"@    s{i} errorbar on")
+            w.append(f"@    s{i} errorbar place both")
+            w.append(f"@    s{i} errorbar color {color}")
+            w.append(f"@    s{i} errorbar linewidth {errbar_lw}")
+            w.append(f"@    s{i} errorbar linestyle 1")
+            w.append(f"@    s{i} errorbar riser linewidth {errbar_lw}")
+            w.append(f"@    s{i} errorbar riser linestyle 1")
+            w.append(f"@    s{i} errorbar riser clip off")
+            w.append(f"@    s{i} errorbar length 0.6")
         if s.get("legend"):
             w.append(f'@    s{i} legend "{_ascii_safe(s["legend"])}"')
 
@@ -224,8 +255,14 @@ def export_agr(path, series, xlabel, ylabel, title="", xlog=False, ylog=False,
     for i, s in enumerate(series):
         x = np.asarray(s["x"], dtype=float)
         y = np.asarray(s["y"], dtype=float)
-        block = [f"@target G0.S{i}", "@type xy"]
-        block += [f"{xi:.8g} {yi:.8g}" for xi, yi in zip(x, y)]
+        yerr = s.get("yerr")
+        if yerr is not None:
+            yerr_arr = np.asarray(yerr, dtype=float)
+            block = [f"@target G0.S{i}", "@type xydy"]
+            block += [f"{xi:.8g} {yi:.8g} {ei:.8g}" for xi, yi, ei in zip(x, y, yerr_arr)]
+        else:
+            block = [f"@target G0.S{i}", "@type xy"]
+            block += [f"{xi:.8g} {yi:.8g}" for xi, yi in zip(x, y)]
         block.append("&")
         out += "\n".join(block) + "\n"
 
